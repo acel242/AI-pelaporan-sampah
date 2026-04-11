@@ -1,16 +1,75 @@
-# React + Vite
+# AI Pelaporan Sampah - EcoLapor
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Sistem AI agent untuk automasi pelaporan sampah di Manado, Sulawesi Utara.
 
-Currently, two official plugins are available:
+## Arsitektur
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```
+[Telegram] → [GoBcaEnv Agent] → [SQLite Database]
+                    ↓
+            [OpenAI LLM + Function Calling]
+```
 
-## React Compiler
+## Struktur Proyek
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```
+AI-pelaporan-sampah/
+├── bot/                    # Telegram bot + agent
+│   ├── main.py            # Entry point, handlers
+│   ├── agent.py           # LLM agent + tool definitions
+│   ├── tools.py           # Tool implementations
+│   ├── database.py        # SQLite operations
+│   └── .env.example       # Environment template
+├── pelaporan-sampah/       # React frontend (existing)
+│   └── src/
+│       ├── pages/
+│       │   ├── Warga.jsx  # Warga form
+│       │   ├── Admin.jsx  # Admin dashboard
+│       │   └── Login.jsx  # Login page
+│       └── App.jsx
+├── requirements.txt        # Python dependencies
+└── README.md
+```
 
-## Expanding the ESLint configuration
+## Quick Start
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+### 1. Setup Telegram Bot
+
+1. Buka @BotFather di Telegram
+2. Ketik `/newbot`
+3. Ikuti instruksi, copy bot token
+
+### 2. Setup Environment
+
+```bash
+cd bot
+cp .env.example .env
+# Edit .env:
+#   TELEGRAM_BOT_TOKEN=your_token
+#   OPENAI_API_KEY=your_key
+```
+
+### 3. Run
+
+```bash
+pip install -r requirements.txt
+python bot/main.py
+```
+
+## Fitur
+
+### Untuk Warga
+- 📝 Submit laporan sampah via chat
+- 📋 Cek status laporan sendiri
+
+### Untuk Admin
+- 📊 Dashboard semua laporan
+- 🔄 Update status laporan (Menunggu → Selesai)
+
+## Teknologi
+
+- **Python 3.11+**
+- **python-telegram-bot** - Telegram API
+- **OpenAI API** - LLM with function calling
+- **SQLite** - Database (via aiosqlite)
+- **FastAPI** - (备选, untuk API backend)
