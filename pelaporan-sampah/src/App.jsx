@@ -67,14 +67,17 @@ function App() {
   };
 
   const handleAddLaporan = (newLaporan) => {
-    setLaporan([newLaporan, ...laporan]);
+    setLaporan(prev => [newLaporan, ...prev]);
   };
 
-  // Protective routing logic
+  const handleUpdateStatus = (id, newStatus) => {
+    setLaporan(prev => prev.map(l => l.id === id ? { ...l, status: newStatus } : l));
+  };
+
   useEffect(() => {
     const currentPath = window.location.pathname;
     if (!userRole && currentPath !== '/') {
-        navigate('/');
+      navigate('/');
     }
   }, [userRole, navigate]);
 
@@ -90,7 +93,7 @@ function App() {
           />
           <Route 
             path="/admin" 
-            element={userRole === 'admin' ? <Admin laporan={laporan} /> : <Navigate to="/" />} 
+            element={userRole === 'admin' ? <Admin laporan={laporan} onUpdateStatus={handleUpdateStatus} /> : <Navigate to="/" />} 
           />
         </Routes>
       </main>
