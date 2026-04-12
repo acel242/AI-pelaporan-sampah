@@ -14,6 +14,7 @@ export function Warga() {
   const [isDragging, setIsDragging] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [reportId, setReportId] = useState(null);
+  const [submitError, setSubmitError] = useState(null);
   const fileInputRef = useRef(null);
 
   const handleFileSelect = (file) => {
@@ -73,7 +74,8 @@ export function Warga() {
         handleRemoveFoto();
         setTimeout(() => setIsSuccess(false), 10000);
       } else {
-        alert('Gagal mengirim laporan: ' + (data.error || 'Unknown error'));
+        setSubmitError(data.reason || data.error || 'Gagal mengirim laporan');
+        setTimeout(() => setSubmitError(null), 10000);
       }
     } catch (err) {
       console.error('Submit error:', err);
@@ -91,6 +93,16 @@ export function Warga() {
           Laporkan tumpukan sampah liar di lingkungan Anda. Kami akan segera menindaklanjuti.
         </p>
       </div>
+
+      {submitError && (
+        <div className="bg-red-50 text-red-800 p-4 rounded-xl flex items-start gap-3 border border-red-200 animate-in slide-in-from-top-2">
+          <X className="text-red-600 flex-shrink-0 mt-0.5" size={20} />
+          <div>
+            <span className="font-bold block">Laporan ditolak</span>
+            <span className="text-sm opacity-80">{submitError}</span>
+          </div>
+        </div>
+      )}
 
       {isSuccess && (
         <div className="bg-green-50 text-green-800 p-4 rounded-xl flex items-center gap-3 border border-green-200 animate-in slide-in-from-top-2">
