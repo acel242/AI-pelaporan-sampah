@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -14,7 +14,7 @@ from telegram.ext import (
     ContextTypes,
 )
 from agent import GoBcaEnvAgent
-from database import init_db, create_user as ensure_user
+from database import init_db, create_user as ensure_user, get_conv_state, set_conv_state, clear_conv_state, is_petugas
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -24,16 +24,22 @@ logger = logging.getLogger(__name__)
 
 agent = GoBcaEnvAgent()
 
+ADMIN_PASSWORD = os.getenv("ADMIN_REGISTRATION_PASSWORD", "ecolapor2026")
+
+# ─────────────────────────────────────────────
+# Password Gate Constants
+# ─────────────────────────────────────────────
+STATE_AWAITING_PASSWORD = "awaiting_password"
+
 # ─────────────────────────────────────────────
 # Command Handlers
 # ─────────────────────────────────────────────
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start - register as warga or petugas based on context."""
+    """Handle /start - password gate before registration."""
     user = update.effective_user
     await ensure_user(user.id, user.username or user.first_name or "unknown")
     
     # Check if already registered as petugas
-    from tools import is_petugas, register_petugas_tool
     if await is_petugas(user.id):
         await update.message.reply_text(
             "👋 Halo petugas! Anda sudah terdaftar.\n\n"
@@ -47,18 +53,22 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # First time - show welcome and register as petugas
-    result = await register_petugas_tool(user.id, user.first_name or "Petugas")
+    # Check conversation state
+    state = await get_conv_state(user.id)
+    if state == STATE_AWAITING_PASSWORD:
+        # Already waiting for password, remind user
+        await update.message.reply_text(
+            "🔐 Masih menunggu password. Silakan masukkan password admin:\n"
+            "Contoh: ecolapor2026"
+        )
+        return
+    
+    # First time - ask for password
+    await set_conv_state(user.id, STATE_AWAITING_PASSWORD)
     await update.message.reply_text(
-        f"👋 Halo {user.first_name or 'Petugas'}! Anda terdaftar sebagai petugas DLH.\n\n"
-        f"✅ Registrasi berhasil!\n\n"
-        f"Command:\n"
-        f"/task - Ambil 1 tugas\n"
-        f"/list - Lihat semua pending\n"
-        f"/done <id> <catatan> - Tandai selesai\n"
-        f"/foto <id> - Upload foto bukti\n"
-        f"/stats - Statistik\n\n"
-        f"Ketik /help untuk bantuan."
+        "🔐 EcoLapor Petugas Registration\n\n"
+        "Masukkan password admin untuk mendaftar sebagai petugas:\n"
+        f"_Minimal 6 karakter_"
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -316,7 +326,7 @@ async def auto_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ ID harus angka. Contoh: /auto 5 completed")
 
 # ─────────────────────────────────────────────
-# Message Handler
+# Message Handler (password gate + warga chat)
 # ─────────────────────────────────────────────
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -325,6 +335,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Message from {user.username} (ID:{user.id}): {message}")
     
     await ensure_user(user.id, user.username or user.first_name or "unknown")
+    
+    # Check if waiting for password
+    state = await get_conv_state(user.id)
+    if state == STATE_AWAITING_PASSWORD:
+        if message == ADMIN_PASSWORD:
+            # Correct password - register as petugas
+            await clear_conv_state(user.id)
+            from tools import register_petugas_tool
+            await register_petugas_tool(user.id, user.first_name or "Petugas")
+            await update.message.reply_text(
+                f"✅ Password benar! Selamat datang, {user.first_name or 'Petugas'}!\n\n"
+                f"Anda terdaftar sebagai petugas DLH.\n\n"
+                f"Command:\n"
+                f"/task - Ambil 1 tugas\n"
+                f"/list - Lihat semua pending\n"
+                f"/done <id> <catatan> - Tandai selesai\n"
+                f"/foto <id> - Upload foto bukti\n"
+                f"/stats - Statistik\n\n"
+                f"Ketik /help untuk bantuan."
+            )
+        else:
+            # Wrong password
+            await update.message.reply_text(
+                "❌ Password salah. Silakan coba lagi:\n"
+                "Ketik /start untuk mulai ulang."
+            )
+        return
     
     try:
         response = await agent.process(message, user.id, user.username or user.first_name or "unknown")

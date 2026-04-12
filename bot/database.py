@@ -1,8 +1,9 @@
 import aiosqlite
+import os
 from datetime import datetime
 from typing import Optional
 
-DATABASE_PATH = "bot/pelaporan.db"
+DATABASE_PATH = os.path.join(os.path.dirname(__file__), "pelaporan.db")
 
 async def init_db():
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -65,6 +66,15 @@ async def init_db():
             except aiosqlite.OperationalError:
                 pass  # Column already exists
         
+        # Conversation state for password gate
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS conv_state (
+                user_id INTEGER PRIMARY KEY,
+                state TEXT,
+                updated_at TEXT
+            )
+        """)
+        
         await db.commit()
 
 # ─────────────────────────────────────────────
@@ -91,6 +101,32 @@ async def get_petugas(telegram_id: int) -> Optional[dict]:
 async def is_petugas(telegram_id: int) -> bool:
     petugas = await get_petugas(telegram_id)
     return petugas is not None
+
+# ─────────────────────────────────────────────
+# Conversation State (for password gate)
+# ─────────────────────────────────────────────
+async def get_conv_state(user_id: int) -> Optional[str]:
+    """Get current conversation state for user."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with db.execute("SELECT state FROM conv_state WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+async def set_conv_state(user_id: int, state: str) -> None:
+    """Set conversation state for user."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        now = datetime.now().isoformat()
+        await db.execute(
+            "INSERT OR REPLACE INTO conv_state (user_id, state, updated_at) VALUES (?, ?, ?)",
+            (user_id, state, now)
+        )
+        await db.commit()
+
+async def clear_conv_state(user_id: int) -> None:
+    """Clear conversation state."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("DELETE FROM conv_state WHERE user_id = ?", (user_id,))
+        await db.commit()
 
 # ─────────────────────────────────────────────
 # User Operations
