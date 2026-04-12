@@ -5,12 +5,6 @@ import { MapPin, Clock, FileText, CheckCircle2, X, Eye, Search, AlertTriangle, R
 function DetailModal({ item, onClose, onUpdateStatus }) {
   if (!item) return null;
 
-  const priorityColors = {
-    Tinggi: 'bg-red-100 text-red-700',
-    Sedang: 'bg-amber-100 text-amber-700',
-    Rendah: 'bg-green-100 text-green-700',
-  };
-
   const statusIcons = {
     Menunggu: <Clock size={14} className="mr-1.5" />,
     Diproses: <RefreshCw size={14} className="mr-1.5" />,
@@ -40,7 +34,10 @@ function DetailModal({ item, onClose, onUpdateStatus }) {
               {statusIcons[item.status]}
               {item.status}
             </span>
-            <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold ${priorityColors[item.prioritas]}`}>
+            <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold ${
+              item.prioritas === 'Tinggi' ? 'bg-red-100 text-red-700' :
+              item.prioritas === 'Sedang' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'
+            }`}>
               <AlertTriangle size={12} className="mr-1.5" />
               Prioritas {item.prioritas}
             </span>
