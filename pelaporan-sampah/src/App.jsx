@@ -11,17 +11,60 @@ const dummyData = [
     id: 1,
     nama: "Hendrik P",
     lokasi: "Jl. Gatot Subroto no 21",
-    deskripsi: "Tumpukan sampah plastik menutupi trotoar, tolong segera dibersihkan.",
+    deskripsi: "Tumpukan sampah plastik menutupi trotoar, tolong segera dibersihkan. Sudah terbengkalai selama 3 hari.",
     status: "Menunggu",
-    tanggal: "11/4/2026"
+    prioritas: "Tinggi",
+    tanggal: "11/4/2026",
+    updatedAt: null,
+    activity: [],
+    catatan: null,
+    foto: null
   },
   {
     id: 2,
     nama: "Nisa Aulia",
     lokasi: "Alun-alun Kota sisi timur",
-    deskripsi: "Sampah sisa acara belum diangkut sejak semalam.",
+    deskripsi: "Sampah sisa acara peringatan hari kemerdekaan. Warga sudah mulai komplain soal bau.",
     status: "Selesai",
-    tanggal: "10/4/2026"
+    prioritas: "Sedang",
+    tanggal: "10/4/2026",
+    updatedAt: "11/4/2026 14:30",
+    activity: [
+      { text: "Laporan dibuat", time: "10/4/2026 08:00" },
+      { text: 'Status diubah ke "Diproses"', time: "11/4/2026 09:15" },
+      { text: 'Status diubah ke "Selesai"', time: "11/4/2026 14:30" }
+    ],
+    catatan: null,
+    foto: null
+  },
+  {
+    id: 3,
+    nama: "Budi Santoso",
+    lokasi: "Depan Pasar PIKAS Block C",
+    deskripsi: "Limbah makan menumpuk di depan ruko. Ditinggalkan begitu saja tanpa pengelolaan.",
+    status: "Diproses",
+    prioritas: "Tinggi",
+    tanggal: "11/4/2026",
+    updatedAt: "11/4/2026 10:00",
+    activity: [
+      { text: "Laporan dibuat", time: "11/4/2026 09:00" },
+      { text: 'Status diubah ke "Diproses"', time: "11/4/2026 10:00" }
+    ],
+    catatan: "Sudah dikoordinasikan dengan Dinas LH. Target selesai besok pagi.",
+    foto: null
+  },
+  {
+    id: 4,
+    nama: "Siti Aminah",
+    lokasi: "Jl. Flamboyan No. 8",
+    deskripsi: "Tong sampah di pinggir jalan pecah dan isinya berserakan.",
+    status: "Menunggu",
+    prioritas: "Rendah",
+    tanggal: "11/4/2026",
+    updatedAt: null,
+    activity: [],
+    catatan: null,
+    foto: null
   }
 ];
 
@@ -67,11 +110,28 @@ function App() {
   };
 
   const handleAddLaporan = (newLaporan) => {
-    setLaporan(prev => [newLaporan, ...prev]);
+    setLaporan(prev => [{
+      ...newLaporan,
+      prioritas: 'Sedang',
+      updatedAt: null,
+      activity: [{ text: "Laporan dibuat", time: new Date().toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) }],
+      catatan: null,
+    }, ...prev]);
   };
 
-  const handleUpdateStatus = (id, newStatus) => {
-    setLaporan(prev => prev.map(l => l.id === id ? { ...l, status: newStatus } : l));
+  const handleUpdateStatus = (id, newStatus, newActivity) => {
+    setLaporan(prev => prev.map(l => {
+      if (l.id !== id) return l;
+      const now = new Date().toLocaleString('id-ID', { 
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+      });
+      return {
+        ...l,
+        status: newStatus,
+        updatedAt: now,
+        activity: newActivity || [...(l.activity || []), { text: `Status diubah ke "${newStatus}"`, time: now }]
+      };
+    }));
   };
 
   useEffect(() => {
