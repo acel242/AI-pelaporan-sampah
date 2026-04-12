@@ -13,7 +13,7 @@ app = Flask(__name__)
 CORS(app)
 
 DATABASE_PATH = os.path.join(os.path.dirname(__file__), "..", "bot", "pelaporan.db")
-MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "sk-CJSIoKjjsr-v0NlC7P3IhQ")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "REDACTED")
 
 def get_db():
     """Get database connection for current request context."""
@@ -58,15 +58,15 @@ Aturan:
 Jawaban hanya 1 kata: Rendah, Sedang, atau Tinggi."""
 
     try:
-        with httpx.Client(timeout=10) as client:
+        with httpx.Client(timeout=15) as client:
             response = client.post(
-                "https://api.minimax.chat/v1/chat/completions",
+                "https://api.groq.com/openai/v1/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {MINIMAX_API_KEY}",
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "MiniMax-Text-01",
+                    "model": "llama-3.1-8b-instant",
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": 5,
                     "temperature": 0
