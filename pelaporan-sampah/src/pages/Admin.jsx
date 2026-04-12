@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Card } from '../components/Card';
-import { MapPin, Clock, FileText, CheckCircle2, X, Eye, Search, Filter, AlertTriangle, Check, ChevronDown, BarChart3, Activity, RefreshCw } from 'lucide-react';
+import { MapPin, Clock, FileText, CheckCircle2, X, Eye, Search, AlertTriangle, RefreshCw, BarChart3, ChevronDown } from 'lucide-react';
 
 function DetailModal({ item, onClose, onUpdateStatus }) {
   if (!item) return null;
@@ -9,6 +9,12 @@ function DetailModal({ item, onClose, onUpdateStatus }) {
     Tinggi: 'bg-red-100 text-red-700',
     Sedang: 'bg-amber-100 text-amber-700',
     Rendah: 'bg-green-100 text-green-700',
+  };
+
+  const statusIcons = {
+    Menunggu: <Clock size={14} className="mr-1.5" />,
+    Diproses: <RefreshCw size={14} className="mr-1.5" />,
+    Selesai: <CheckCircle2 size={14} className="mr-1.5" />,
   };
 
   return (
@@ -28,11 +34,10 @@ function DetailModal({ item, onClose, onUpdateStatus }) {
         <div className="p-6 space-y-5">
           <div className="flex flex-wrap gap-2">
             <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold ${
-              item.status === 'Menunggu' ? 'bg-amber-100 text-amber-700' : 
+              item.status === 'Menunggu' ? 'bg-amber-100 text-amber-700' :
               item.status === 'Diproses' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'
             }`}>
-              {item.status === 'Menunggu' ? <Clock size={12} className="mr-1.5" /> : 
-               item.status === 'Diproses' ? <RefreshCw size={12} className="mr-1.5" /> : <CheckCircle2 size={12} className="mr-1.5" />}
+              {statusIcons[item.status]}
               {item.status}
             </span>
             <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold ${priorityColors[item.prioritas]}`}>
@@ -47,8 +52,8 @@ function DetailModal({ item, onClose, onUpdateStatus }) {
               <p className="text-slate-700 font-bold">{item.tanggal}</p>
             </div>
             <div className="bg-slate-50 rounded-xl p-4">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Terakhir Diperbarui</p>
-              <p className="text-slate-700 font-bold">{item.updatedAt || item.tanggal}</p>
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Terakhir Update</p>
+              <p className="text-slate-700 font-bold">{item.updatedAt || '-'}</p>
             </div>
           </div>
 
@@ -68,11 +73,7 @@ function DetailModal({ item, onClose, onUpdateStatus }) {
           {item.foto && (
             <div>
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Dokumentasi</p>
-              <img 
-                src={item.foto} 
-                alt="Dokumentasi laporan" 
-                className="w-full h-48 object-cover rounded-xl bg-slate-100"
-              />
+              <img src={item.foto} alt="Dokumentasi" className="w-full h-48 object-cover rounded-xl bg-slate-100" />
             </div>
           )}
 
@@ -147,56 +148,61 @@ export function Admin({ laporan, onUpdateStatus }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('terbaru');
 
-  const stats = useMemo(() => {
-    const total = laporan.length;
-    const menunggu = laporan.filter(l => l.status === 'Menunggu').length;
-    const diproses = laporan.filter(l => l.status === 'Diproses').length;
-    const selesai = laporan.filter(l => l.status === 'Selesai').length;
-    return { total, menunggu, diproses, selesai };
-  }, [laporan]);
+  const stats = useMemo(() => ({
+    total: laporan.length,
+    menunggu: laporan.filter(l => l.status === 'Menunggu').length,
+    diproses: laporan.filter(l => l.status === 'Diproses').length,
+    selesai: laporan.filter(l => l.status === 'Selesai').length,
+  }), [laporan]);
 
   const filteredLaporan = useMemo(() => {
     let result = [...laporan];
-    
     if (filterStatus !== 'Semua') {
       result = result.filter(l => l.status === filterStatus);
     }
-    
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(l => 
+      result = result.filter(l =>
         l.nama.toLowerCase().includes(q) ||
         l.lokasi.toLowerCase().includes(q) ||
         l.deskripsi.toLowerCase().includes(q)
       );
     }
-    
-    if (sortBy === 'terbaru') {
-      result.sort((a, b) => b.id - a.id);
-    } else if (sortBy === 'terlama') {
-      result.sort((a, b) => a.id - b.id);
-    }
-    
+    if (sortBy === 'terbaru') result.sort((a, b) => b.id - a.id);
+    else result.sort((a, b) => a.id - b.id);
     return result;
   }, [laporan, filterStatus, searchQuery, sortBy]);
 
   const handleUpdateStatus = (id, newStatus) => {
     const item = laporan.find(l => l.id === id);
-    const now = new Date().toLocaleString('id-ID', { 
+    if (!item) return;
+    const now = new Date().toLocaleString('id-ID', {
       day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
     });
-    
-    const newActivity = [
-      ...(item.activity || []),
-      { text: `Status diubah ke "${newStatus}"`, time: now }
-    ];
-    
+    const newActivity = [...(item.activity || []), { text: `Status diubah ke "${newStatus}"`, time: now }];
     onUpdateStatus(id, newStatus, newActivity);
+  };
+
+  const statusBadge = (status) => {
+    if (status === 'Menunggu') return 'bg-amber-100 text-amber-700';
+    if (status === 'Diproses') return 'bg-blue-100 text-blue-700';
+    return 'bg-green-100 text-green-700';
+  };
+
+  const priorityBadge = (p) => {
+    if (p === 'Tinggi') return 'bg-red-100 text-red-700';
+    if (p === 'Sedang') return 'bg-amber-100 text-amber-700';
+    return 'bg-green-100 text-green-700';
+  };
+
+  const statusIcon = (status) => {
+    if (status === 'Menunggu') return <Clock size={12} className="mr-1" />;
+    if (status === 'Diproses') return <RefreshCw size={12} className="mr-1" />;
+    return <CheckCircle2 size={12} className="mr-1" />;
   };
 
   return (
     <div className="max-w-6xl mx-auto space-y-10 animate-in fade-in zoom-in-95 duration-500 pt-8 pb-12">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Dashboard Admin</h2>
@@ -208,55 +214,25 @@ export function Admin({ laporan, onUpdateStatus }) {
         </div>
       </div>
 
-      {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="p-5 bg-gradient-to-br from-slate-800 to-slate-900 text-white">
-          <div className="flex items-center gap-4">
-            <div className="p-2.5 bg-white/10 rounded-xl">
-              <FileText size={22} />
+        {[
+          { label: 'Total', value: stats.total, from: 'from-slate-800', to: 'to-slate-900', icon: <FileText size={22} /> },
+          { label: 'Menunggu', value: stats.menunggu, from: 'from-amber-500', to: 'to-amber-600', icon: <Clock size={22} /> },
+          { label: 'Diproses', value: stats.diproses, from: 'from-blue-500', to: 'to-blue-600', icon: <RefreshCw size={22} /> },
+          { label: 'Selesai', value: stats.selesai, from: 'from-green-500', to: 'to-green-600', icon: <CheckCircle2 size={22} /> },
+        ].map(({ label, value, from, to, icon }) => (
+          <Card key={label} className={`p-5 bg-gradient-to-br ${from} ${to} text-white`}>
+            <div className="flex items-center gap-4">
+              <div className="p-2.5 bg-white/10 rounded-xl">{icon}</div>
+              <div>
+                <p className="text-xs font-semibold text-white/60 uppercase tracking-wider">{label}</p>
+                <h3 className="text-3xl font-black">{value}</h3>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-semibold text-white/60 uppercase tracking-wider">Total</p>
-              <h3 className="text-3xl font-black">{stats.total}</h3>
-            </div>
-          </div>
-        </Card>
-        <Card className="p-5 bg-gradient-to-br from-amber-500 to-amber-600 text-white">
-          <div className="flex items-center gap-4">
-            <div className="p-2.5 bg-white/10 rounded-xl">
-              <Clock size={22} />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-white/60 uppercase tracking-wider">Menunggu</p>
-              <h3 className="text-3xl font-black">{stats.menunggu}</h3>
-            </div>
-          </div>
-        </Card>
-        <Card className="p-5 bg-gradient-to-br from-blue-500 to-blue-600 text-white">
-          <div className="flex items-center gap-4">
-            <div className="p-2.5 bg-white/10 rounded-xl">
-              <RefreshCw size={22} />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-white/60 uppercase tracking-wider">Diproses</p>
-              <h3 className="text-3xl font-black">{stats.diproses}</h3>
-            </div>
-          </div>
-        </Card>
-        <Card className="p-5 bg-gradient-to-br from-green-500 to-green-600 text-white">
-          <div className="flex items-center gap-4">
-            <div className="p-2.5 bg-white/10 rounded-xl">
-              <CheckCircle2 size={22} />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-white/60 uppercase tracking-wider">Selesai</p>
-              <h3 className="text-3xl font-black">{stats.selesai}</h3>
-            </div>
-          </div>
-        </Card>
+          </Card>
+        ))}
       </div>
 
-      {/* Search & Filter Bar */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
           <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -290,14 +266,11 @@ export function Admin({ laporan, onUpdateStatus }) {
         </div>
       </div>
 
-      {/* Laporan List */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-bold text-slate-900">
-            Daftar Laporan 
-            <span className="text-slate-400 font-normal ml-2">({filteredLaporan.length})</span>
-          </h3>
-        </div>
+        <h3 className="text-lg font-bold text-slate-900">
+          Daftar Laporan
+          <span className="text-slate-400 font-normal ml-2">({filteredLaporan.length})</span>
+        </h3>
 
         {filteredLaporan.length === 0 ? (
           <div className="py-16 text-center text-slate-400 bg-slate-50/50 border-2 border-dashed border-slate-200 rounded-2xl">
@@ -309,25 +282,19 @@ export function Admin({ laporan, onUpdateStatus }) {
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {filteredLaporan.map((item) => (
-              <Card 
-                key={item.id} 
+              <Card
+                key={item.id}
                 className="p-0 flex flex-col group overflow-hidden border-slate-200/60 shadow-sm hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
                 onClick={() => setSelectedItem(item)}
               >
                 <div className="p-6 space-y-4 flex-grow">
                   <div className="flex justify-between items-start gap-2">
                     <div className="flex flex-wrap gap-1.5">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${
-                        item.status === 'Menunggu' ? 'bg-amber-100 text-amber-700' : 
-                        item.status === 'Diproses' ? 'bg-blue-100 text-blue-700' : 'bg-green                      }`}>
-                        {item.status === 'Menunggu' ? <Clock size={12} className="mr-1" /> : 
-                         item.status === 'Diproses' ? <RefreshCw size={12} className="mr-1" /> : <CheckCircle2 size={12} className="mr-1" />}
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${statusBadge(item.status)}`}>
+                        {statusIcon(item.status)}
                         {item.status}
                       </span>
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${
-                        item.prioritas === 'Tinggi' ? 'bg-red-100 text-red-700' : 
-                        item.prioritas === 'Sedang' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'
-                      }`}>
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${priorityBadge(item.prioritas)}`}>
                         <AlertTriangle size={10} className="mr-1" />
                         {item.prioritas}
                       </span>
@@ -348,18 +315,18 @@ export function Admin({ laporan, onUpdateStatus }) {
                     <Eye size={14} />
                     <span>Lihat Detail</span>
                   </div>
-                  <ChevronDown size={14} className="text-slate-400 group-hover:translate-y-0.5 transition-transform" />
+                  <ChevronDown size={14} className="text-slate-400" />
                 </div>
               </Card>
-            ))
-          )}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </div>
 
       {selectedItem && (
-        <DetailModal 
-          item={selectedItem} 
-          onClose={() => setSelectedItem(null)} 
+        <DetailModal
+          item={selectedItem}
+          onClose={() => setSelectedItem(null)}
           onUpdateStatus={handleUpdateStatus}
         />
       )}
