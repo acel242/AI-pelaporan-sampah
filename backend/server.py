@@ -18,6 +18,23 @@ def get_db():
         db.row_factory = sqlite3.Row
     return db
 
+
+def auto_escalate_old_reports(db, days=3):
+    """Auto-escalate reports > N days old to Tinggi."""
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    now = datetime.now().isoformat()
+    cursor = db.execute(
+        """UPDATE laporan 
+           SET prioritas = 'Tinggi', updated_at = ?
+           WHERE status = 'Menunggu' 
+             AND prioritas != 'Tinggi'
+             AND created_at < ?""",
+        (now, cutoff)
+    )
+    db.commit()
+    return cursor.rowcount
+
 def close_db(e=None):
     """Close database connection."""
     db = g.pop('db', None)
@@ -110,6 +127,9 @@ def create_routes(app):
         search = request.args.get("search")
         
         db = get_db()
+        
+        # Auto-escalate old pending reports
+        auto_escalate_old_reports(db)
         
         query = "SELECT * FROM laporan WHERE 1=1"
         params = []
@@ -253,6 +273,9 @@ def create_routes(app):
     def get_stats():
         """Get statistics for admin dashboard."""
         db = get_db()
+        
+        # Auto-escalate old pending reports
+        auto_escalate_old_reports(db)
         
         total = db.execute("SELECT COUNT(*) as count FROM laporan").fetchone()["count"]
         

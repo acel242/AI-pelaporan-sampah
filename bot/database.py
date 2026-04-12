@@ -204,10 +204,14 @@ async def get_report_by_id(report_id: int) -> Optional[dict]:
             return dict(row) if row else None
 
 async def get_pending_reports() -> list[dict]:
-    """Get all pending reports sorted by priority (Tinggi first) then by oldest created_at."""
+    """Get all pending reports sorted by priority (Tinggi first) then by oldest created_at.
+    Auto-escalates reports > 3 days old to Tinggi priority."""
+    
+    # Auto-escalate old reports
+    await escalate_old_reports()
+    
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
-        priority_order = {"Tinggi": 1, "Sedang": 2, "Rendah": 3}
         
         async with db.execute(
             """SELECT * FROM laporan WHERE status = 'Menunggu' 
@@ -221,6 +225,25 @@ async def get_pending_reports() -> list[dict]:
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+async def escalate_old_reports(days: int = 3) -> int:
+    """Auto-escalate reports that have been 'Menunggu' for more than X days to Tinggi priority.
+    Returns number of reports escalated."""
+    from datetime import timedelta
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cursor = await db.execute(
+            """UPDATE laporan 
+               SET prioritas = 'Tinggi', updated_at = ?
+               WHERE status = 'Menunggu' 
+                 AND prioritas != 'Tinggi'
+                 AND created_at < ?""",
+            (datetime.now().isoformat(), cutoff)
+        )
+        await db.commit()
+        return cursor.rowcount
 
 # ─────────────────────────────────────────────
 # Foto Bukti Operations
