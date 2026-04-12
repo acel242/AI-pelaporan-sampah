@@ -121,14 +121,23 @@ function Dashboard({ onBuatLaporan }) {
           <div className="space-y-3">
             {recent.map(item => (
               <div key={item.id} className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-start gap-4">
-                <div className="p-2 bg-slate-50 rounded-lg">
-                  <Trash2 size={20} className="text-slate-400" />
-                </div>
+                {item.foto ? (
+                  <img 
+                    src={item.foto} 
+                    alt="Laporan" 
+                    className="w-14 h-14 object-cover rounded-lg flex-shrink-0" 
+                  />
+                ) : (
+                  <div className="p-2 bg-slate-50 rounded-lg flex-shrink-0">
+                    <Trash2 size={20} className="text-slate-400" />
+                  </div>
+                )}
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-slate-800 truncate">{item.nama}</p>
                   <p className="text-sm text-slate-500 flex items-center gap-1 mt-0.5">
                     <MapPin size={12} /> {item.lokasi}
                   </p>
+                  <p className="text-xs text-slate-400 mt-0.5 truncate">{item.deskripsi}</p>
                 </div>
                 <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${statusColor(item.status)}`}>
                   {item.status}
