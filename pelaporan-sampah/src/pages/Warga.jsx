@@ -2,14 +2,18 @@ import { useState, useRef } from 'react';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { Card } from '../components/Card';
-import { CheckCircle2, UploadCloud, X, Image as ImageIcon } from 'lucide-react';
+import { CheckCircle2, UploadCloud, X } from 'lucide-react';
 
-export function Warga({ addLaporan }) {
+const API_BASE = '/api';
+
+export function Warga() {
   const [formData, setFormData] = useState({ nama: '', lokasi: '', deskripsi: '' });
   const [foto, setFoto] = useState(null);
   const [fotoPreview, setFotoPreview] = useState(null);
   const [isSuccess, setIsSuccess] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [reportId, setReportId] = useState(null);
   const fileInputRef = useRef(null);
 
   const handleFileSelect = (file) => {
@@ -41,23 +45,42 @@ export function Warga({ addLaporan }) {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.nama || !formData.lokasi || !formData.deskripsi) return;
     
-    addLaporan({
-      id: Date.now(),
-      ...formData,
-      foto: fotoPreview,
-      status: "Menunggu",
-      tanggal: new Date().toLocaleDateString('id-ID')
-    });
+    setIsSubmitting(true);
     
-    setIsSuccess(true);
-    setFormData({ nama: '', lokasi: '', deskripsi: '' });
-    handleRemoveFoto();
-    
-    setTimeout(() => setIsSuccess(false), 5000);
+    try {
+      const res = await fetch(`${API_BASE}/laporan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nama: formData.nama,
+          lokasi: formData.lokasi,
+          deskripsi: formData.deskripsi,
+          foto: fotoPreview || null,
+          user_id: 0  // Anonymous for web users
+        })
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        setReportId(data.id);
+        setIsSuccess(true);
+        setFormData({ nama: '', lokasi: '', deskripsi: '' });
+        handleRemoveFoto();
+        setTimeout(() => setIsSuccess(false), 10000);
+      } else {
+        alert('Gagal mengirim laporan: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Submit error:', err);
+      alert('Terjadi kesalahan saat mengirim laporan.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -74,7 +97,7 @@ export function Warga({ addLaporan }) {
           <CheckCircle2 className="text-green-600 flex-shrink-0" size={20} />
           <div>
             <span className="font-bold block">Laporan berhasil dikirim!</span>
-            <span className="text-sm opacity-80">ID Laporan: #{Date.now().toString().slice(-6)}</span>
+            <span className="text-sm opacity-80">ID Laporan: #{reportId}</span>
           </div>
         </div>
       )}
@@ -163,9 +186,9 @@ export function Warga({ addLaporan }) {
             <Button 
               type="submit" 
               className="w-full py-3.5 text-base shadow-lg shadow-blue-500/20"
-              disabled={!formData.nama || !formData.lokasi || !formData.deskripsi}
+              disabled={!formData.nama || !formData.lokasi || !formData.deskripsi || isSubmitting}
             >
-              Kirim Laporan
+              {isSubmitting ? 'Mengirim...' : 'Kirim Laporan'}
             </Button>
           </div>
         </form>

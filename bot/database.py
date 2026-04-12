@@ -2,7 +2,7 @@ import aiosqlite
 from datetime import datetime
 from typing import Optional
 
-DATABASE_PATH = "pelaporan.db"
+DATABASE_PATH = "bot/pelaporan.db"
 
 async def init_db():
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -13,6 +13,15 @@ async def init_db():
                 username TEXT,
                 role TEXT DEFAULT 'warga',
                 created_at TEXT
+            )
+        """)
+        
+        # Petugas table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS petugas (
+                telegram_id INTEGER PRIMARY KEY,
+                nama TEXT,
+                registered_at TEXT
             )
         """)
         
@@ -34,23 +43,54 @@ async def init_db():
             )
         """)
         
+        # Foto bukti table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS foto_bukti (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                laporan_id INTEGER,
+                foto_url TEXT,
+                uploaded_at TEXT,
+                FOREIGN KEY (laporan_id) REFERENCES laporan(id)
+            )
+        """)
+        
         # Migration: add columns if they don't exist
-        try:
-            await db.execute("ALTER TABLE laporan ADD COLUMN prioritas TEXT DEFAULT 'Sedang'")
-        except aiosqlite.OperationalError:
-            pass  # Column already exists
-        
-        try:
-            await db.execute("ALTER TABLE laporan ADD COLUMN catatan TEXT")
-        except aiosqlite.OperationalError:
-            pass  # Column already exists
-        
-        try:
-            await db.execute("ALTER TABLE laporan ADD COLUMN updated_at TEXT")
-        except aiosqlite.OperationalError:
-            pass  # Column already exists
+        for col, default in [
+            ("prioritas", "Sedang"),
+            ("catatan", None),
+            ("updated_at", None),
+        ]:
+            try:
+                await db.execute(f"ALTER TABLE laporan ADD COLUMN {col} TEXT")
+            except aiosqlite.OperationalError:
+                pass  # Column already exists
         
         await db.commit()
+
+# ─────────────────────────────────────────────
+# Petugas Operations
+# ─────────────────────────────────────────────
+async def register_petugas(telegram_id: int, nama: str) -> dict:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        now = datetime.now().isoformat()
+        await db.execute(
+            """INSERT OR REPLACE INTO petugas (telegram_id, nama, registered_at)
+               VALUES (?, ?, ?)""",
+            (telegram_id, nama, now)
+        )
+        await db.commit()
+        return {"telegram_id": telegram_id, "nama": nama, "registered_at": now}
+
+async def get_petugas(telegram_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM petugas WHERE telegram_id = ?", (telegram_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+async def is_petugas(telegram_id: int) -> bool:
+    petugas = await get_petugas(telegram_id)
+    return petugas is not None
 
 # ─────────────────────────────────────────────
 # User Operations
@@ -127,6 +167,49 @@ async def get_report_by_id(report_id: int) -> Optional[dict]:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
+async def get_pending_reports() -> list[dict]:
+    """Get all pending reports sorted by priority (Tinggi first) then by oldest created_at."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        priority_order = {"Tinggi": 1, "Sedang": 2, "Rendah": 3}
+        
+        async with db.execute(
+            """SELECT * FROM laporan WHERE status = 'Menunggu' 
+               ORDER BY 
+                   CASE prioritas 
+                       WHEN 'Tinggi' THEN 1 
+                       WHEN 'Sedang' THEN 2 
+                       WHEN 'Rendah' THEN 3 
+                   END,
+                   created_at ASC"""
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+# ─────────────────────────────────────────────
+# Foto Bukti Operations
+# ─────────────────────────────────────────────
+async def add_foto_bukti(laporan_id: int, foto_url: str) -> dict:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        now = datetime.now().isoformat()
+        cursor = await db.execute(
+            """INSERT INTO foto_bukti (laporan_id, foto_url, uploaded_at)
+               VALUES (?, ?, ?)""",
+            (laporan_id, foto_url, now)
+        )
+        await db.commit()
+        return {"id": cursor.lastrowid, "laporan_id": laporan_id, "foto_url": foto_url, "uploaded_at": now}
+
+async def get_foto_bukti(laporan_id: int) -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM foto_bukti WHERE laporan_id = ? ORDER BY uploaded_at ASC",
+            (laporan_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
 # ─────────────────────────────────────────────
 # Update Operations
 # ─────────────────────────────────────────────
@@ -167,16 +250,13 @@ async def get_statistics() -> dict:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         
-        # Total counts
         total = await db.execute_fetchone("SELECT COUNT(*) as count FROM laporan")[0]
         
-        # By status
         status_rows = await db.execute_fetchall(
             "SELECT status, COUNT(*) as count FROM laporan GROUP BY status"
         )
         by_status = {row[0]: row[1] for row in status_rows}
         
-        # By priority
         priority_rows = await db.execute_fetchall(
             "SELECT prioritas, COUNT(*) as count FROM laporan GROUP BY prioritas"
         )

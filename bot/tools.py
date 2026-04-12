@@ -5,6 +5,15 @@ from database import (
     update_report_status,
     create_user,
     get_user,
+    register_petugas,
+    is_petugas,
+    get_petugas,
+    get_pending_reports,
+    add_foto_bukti,
+    get_foto_bukti,
+    get_statistics,
+    get_report_by_id,
+    update_report_note,
 )
 
 # ─────────────────────────────────────────────
@@ -70,11 +79,6 @@ async def get_all_reports_tool(
 ) -> dict:
     """
     Get all reports in the system with optional filters. Admin only.
-    
-    Args:
-        status: Filter by status ('Menunggu', 'Diproses', 'Selesai')
-        prioritas: Filter by priority ('Tinggi', 'Sedang', 'Rendah')
-        limit: Max number of reports to return (default 50)
     """
     reports = await get_all_reports()
     
@@ -150,8 +154,6 @@ async def set_priority_tool(report_id: int, prioritas: str) -> dict:
     Set the priority of a report. Admin only.
     Priority options: 'Tinggi', 'Sedang', 'Rendah'.
     """
-    from database import update_report_priority
-    
     valid_priorities = ['Tinggi', 'Sedang', 'Rendah']
     if prioritas not in valid_priorities:
         return {
@@ -179,10 +181,7 @@ async def set_priority_tool(report_id: int, prioritas: str) -> dict:
 async def add_note_tool(report_id: int, catatan: str) -> dict:
     """
     Add an internal note to a report. Admin/Agent only.
-    This is for tracking agent observations and actions.
     """
-    from database import update_report_note
-    
     updated = await update_report_note(report_id, catatan)
     if not updated:
         return {
@@ -202,10 +201,6 @@ async def add_note_tool(report_id: int, catatan: str) -> dict:
 async def bulk_update_status_tool(report_ids: list, status: str) -> dict:
     """
     Update status for multiple reports at once. Admin only.
-    
-    Args:
-        report_ids: List of report IDs to update
-        status: New status ('Menunggu', 'Diproses', 'Selesai')
     """
     valid_statuses = ['Menunggu', 'Diproses', 'Selesai']
     if status not in valid_statuses:
@@ -240,44 +235,36 @@ async def bulk_update_status_tool(report_ids: list, status: str) -> dict:
 # ─────────────────────────────────────────────
 async def get_statistics_tool() -> dict:
     """
-    Get overall statistics about reports. Admin only.
-    Returns counts by status, priority, and trends.
+    Get overall statistics about reports.
     """
+    stats = await get_statistics()
     reports = await get_all_reports()
     
-    if not reports:
+    if stats['total'] == 0:
         return {
             "success": True,
             "message": "📊 Belum ada data laporan.",
-            "data": {}
+            "data": stats
         }
     
-    total = len(reports)
-    by_status = {
-        'Menunggu': sum(1 for r in reports if r.get('status') == 'Menunggu'),
-        'Diproses': sum(1 for r in reports if r.get('status') == 'Diproses'),
-        'Selesai': sum(1 for r in reports if r.get('status') == 'Selesai'),
-    }
-    by_priority = {
-        'Tinggi': sum(1 for r in reports if r.get('prioritas') == 'Tinggi'),
-        'Sedang': sum(1 for r in reports if r.get('prioritas') == 'Sedang'),
-        'Rendah': sum(1 for r in reports if r.get('prioritas') == 'Rendah'),
-    }
+    total = stats['total']
+    by_status = stats.get('by_status', {})
+    by_priority = stats.get('by_priority', {})
     
-    # Calculate completion rate
-    completion_rate = (by_status['Selesai'] / total * 100) if total > 0 else 0
+    selesai = by_status.get('Selesai', 0)
+    completion_rate = (selesai / total * 100) if total > 0 else 0
     
     lines = [
         f"📊 Statistik Laporan EcoLapor\n",
         f"━━━━━━━━━━━━━━━━━━━━\n",
         f"📁 Total Laporan: {total}\n",
-        f"✅ Selesai: {by_status['Selesai']} ({by_status['Selesai']/total*100:.1f}%)\n",
-        f"🔄 Diproses: {by_status['Diproses']}\n",
-        f"⏳ Menunggu: {by_status['Menunggu']}\n",
+        f"✅ Selesai: {selesai} ({selesai/total*100:.1f}%)\n",
+        f"🔄 Diproses: {by_status.get('Diproses', 0)}\n",
+        f"⏳ Menunggu: {by_status.get('Menunggu', 0)}\n",
         f"━━━━━━━━━━━━━━━━━━━━\n",
-        f"🔴 Prioritas Tinggi: {by_priority['Tinggi']}\n",
-        f"🟡 Prioritas Sedang: {by_priority['Sedang']}\n",
-        f"🟢 Prioritas Rendah: {by_priority['Rendah']}\n",
+        f"🔴 Prioritas Tinggi: {by_priority.get('Tinggi', 0)}\n",
+        f"🟡 Prioritas Sedang: {by_priority.get('Sedang', 0)}\n",
+        f"🟢 Prioritas Rendah: {by_priority.get('Rendah', 0)}\n",
         f"━━━━━━━━━━━━━━━━━━━━\n",
         f"📈 Tingkat Penyelesaian: {completion_rate:.1f}%"
     ]
@@ -285,23 +272,15 @@ async def get_statistics_tool() -> dict:
     return {
         "success": True,
         "message": "\n".join(lines),
-        "data": {
-            "total": total,
-            "by_status": by_status,
-            "by_priority": by_priority,
-            "completion_rate": completion_rate
-        }
+        "data": stats
     }
 
 # ─────────────────────────────────────────────
-# TOOL: Search Reports (Admin)
+# TOOL: Search Reports
 # ─────────────────────────────────────────────
 async def search_reports_tool(query: str) -> dict:
     """
-    Search reports by nama, lokasi, or deskripsi. Admin only.
-    
-    Args:
-        query: Search keyword
+    Search reports by nama, lokasi, or deskripsi.
     """
     reports = await get_all_reports()
     
@@ -331,12 +310,200 @@ async def search_reports_tool(query: str) -> dict:
     }
 
 # ─────────────────────────────────────────────
+# TOOL: Register Petugas
+# ─────────────────────────────────────────────
+async def register_petugas_tool(telegram_id: int, nama: str) -> dict:
+    """
+    Register a new petugas (field officer).
+    Use when petugas does /start for the first time.
+    """
+    result = await register_petugas(telegram_id, nama)
+    return {
+        "success": True,
+        "message": (
+            f"✅ Petugas berhasil terdaftar!\n\n"
+            f"👤 Nama: {nama}\n"
+            f"🆔 Telegram ID: {telegram_id}\n\n"
+            f"Command tersedia:\n"
+            f"/task - Ambil 1 tugas\n"
+            f"/list - Lihat semua pending\n"
+            f"/done <id> <catatan> - Tandai selesai\n"
+            f"/foto <id> - Upload foto bukti\n"
+            f"/stats - Statistik"
+        ),
+        "data": result
+    }
+
+# ─────────────────────────────────────────────
+# TOOL: Get Task (Petugas)
+# ─────────────────────────────────────────────
+async def get_task_tool(telegram_id: int) -> dict:
+    """
+    Get the highest priority pending task for petugas.
+    Returns the oldest report with highest priority.
+    Petugas only.
+    """
+    # Check if registered
+    if not await is_petugas(telegram_id):
+        return {
+            "success": False,
+            "message": "❌ Anda belum terdaftar sebagai petugas.\nGunakan /start untuk mendaftar."
+        }
+    
+    pending = await get_pending_reports()
+    
+    if not pending:
+        return {
+            "success": True,
+            "message": "✅ Tidak ada laporan yang menunggu.\nSemua laporan sudah ditangani!"
+        }
+    
+    task = pending[0]  # Already sorted by priority then oldest
+    
+    # Format the task message
+    prioritas_emoji = "🔴" if task.get('prioritas') == 'Tinggi' else "🟡" if task.get('prioritas') == 'Sedang' else "🟢"
+    
+    msg = (
+        f"📋 TUGAS BARU #{task['id']}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"{prioritas_emoji} Prioritas: {task.get('prioritas', 'Sedang')}\n"
+        f"👤 Pelapor: {task.get('nama', 'Anonim')}\n"
+        f"📍 Lokasi: {task.get('lokasi', '-')}\n"
+        f"📝 Deskripsi: {task.get('deskripsi', '-')}\n"
+        f"🕐 Dilaporkan: {task.get('tanggal', '-')}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Sudah selesai? Ketik:\n"
+        f"/done {task['id']} <catatan hasil kerja>\n\n"
+        f"Upload foto bukti:\n"
+        f"/foto {task['id']}"
+    )
+    
+    return {
+        "success": True,
+        "message": msg,
+        "data": task
+    }
+
+# ─────────────────────────────────────────────
+# TOOL: Mark Done (Petugas)
+# ─────────────────────────────────────────────
+async def mark_done_tool(report_id: int, catatan: str, telegram_id: int) -> dict:
+    """
+    Mark a report as Selesai (completed). Petugas only.
+    """
+    if not await is_petugas(telegram_id):
+        return {
+            "success": False,
+            "message": "❌ Anda belum terdaftar sebagai petugas.\nGunakan /start untuk mendaftar."
+        }
+    
+    report = await get_report_by_id(report_id)
+    if not report:
+        return {
+            "success": False,
+            "message": f"❌ Laporan #{report_id} tidak ditemukan."
+        }
+    
+    if report.get('status') == 'Selesai':
+        return {
+            "success": False,
+            "message": f"⚠️ Laporan #{report_id} sudah selesai."
+        }
+    
+    # Update status and note
+    await update_report_status(report_id, 'Selesai')
+    if catatan:
+        await update_report_note(report_id, catatan)
+    
+    return {
+        "success": True,
+        "message": (
+            f"✅ Laporan #{report_id} ditandai SELESAI!\n\n"
+            f"📝 Catatan: {catatan or '-'}\n\n"
+            f"Jangan lupa upload foto bukti:\n"
+            f"/foto {report_id}"
+        ),
+        "data": {"id": report_id, "status": "Selesai", "catatan": catatan}
+    }
+
+# ─────────────────────────────────────────────
+# TOOL: Upload Foto Bukti (Petugas)
+# ─────────────────────────────────────────────
+async def upload_foto_tool(report_id: int, foto_url: str, telegram_id: int) -> dict:
+    """
+    Upload photo evidence for a completed report. Petugas only.
+    foto_url can be file_id from Telegram photo or a URL.
+    """
+    if not await is_petugas(telegram_id):
+        return {
+            "success": False,
+            "message": "❌ Anda belum terdaftar sebagai petugas.\nGunakan /start untuk mendaftar."
+        }
+    
+    report = await get_report_by_id(report_id)
+    if not report:
+        return {
+            "success": False,
+            "message": f"❌ Laporan #{report_id} tidak ditemukan."
+        }
+    
+    foto = await add_foto_bukti(report_id, foto_url)
+    
+    return {
+        "success": True,
+        "message": (
+            f"📸 Foto bukti berhasil diupload!\n\n"
+            f"📋 Laporan: #{report_id}\n"
+            f"🖼️ Foto ID: {foto['id']}\n\n"
+            f"Warga bisa melihat foto ini saat cek laporan di website."
+        ),
+        "data": foto
+    }
+
+# ─────────────────────────────────────────────
+# TOOL: List Pending (Petugas)
+# ─────────────────────────────────────────────
+async def list_pending_tool(telegram_id: int) -> dict:
+    """
+    List all pending reports for petugas. Petugas only.
+    """
+    if not await is_petugas(telegram_id):
+        return {
+            "success": False,
+            "message": "❌ Anda belum terdaftar sebagai petugas.\nGunakan /start untuk mendaftar."
+        }
+    
+    pending = await get_pending_reports()
+    
+    if not pending:
+        return {
+            "success": True,
+            "message": "✅ Tidak ada laporan yang menunggu."
+        }
+    
+    lines = [f"📋 DAFTAR MENUNGGU ({len(pending)} laporan)\n"]
+    lines.append("━━━━━━━━━━━━━━━━━━━━\n")
+    
+    for r in pending:
+        prioritas_emoji = "🔴" if r.get('prioritas') == 'Tinggi' else "🟡" if r.get('prioritas') == 'Sedang' else "🟢"
+        lines.append(
+            f"#{r['id']} {prioritas_emoji} | {r.get('nama', 'Anon')} | {r.get('lokasi', '-')} | {r.get('tanggal', '-')}"
+        )
+    
+    lines.append("\nKetik /task untuk ambil tugas pertama.")
+    
+    return {
+        "success": True,
+        "message": "\n".join(lines),
+        "data": pending
+    }
+
+# ─────────────────────────────────────────────
 # TOOL: Auto-Respond (Admin)
 # ─────────────────────────────────────────────
 async def auto_respond_tool(report_id: int, template: str) -> dict:
     """
     Set an auto-response template for a report. Admin only.
-    
     Templates:
     - 'accepted': Laporan diterima, akan ditindaklanjuti
     - 'processing': Laporan sedang diproses
