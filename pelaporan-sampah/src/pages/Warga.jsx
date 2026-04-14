@@ -73,8 +73,19 @@ export function Warga() {
         setGpsSource('browser');
         setGpsLoading(false);
       },
-      () => { setGpsLoading(false); }, // permission denied or error
-      { enableHighAccuracy: true, timeout: 10000 }
+      (err) => {
+        console.warn('Geolocation error:', err.message, err.code);
+        setGpsLoading(false);
+        // Show user-friendly message
+        if (err.code === 1) {
+          console.warn('Permission denied by user');
+        } else if (err.code === 2) {
+          console.warn('Position unavailable — GPS might be off or no signal');
+        } else if (err.code === 3) {
+          console.warn('Geolocation timed out');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
     );
   }, []);
 
@@ -144,7 +155,10 @@ export function Warga() {
 
   // Manual GPS refresh button
   const refreshGps = () => {
-    if (!navigator.geolocation) return;
+    if (!navigator.geolocation) {
+      alert('Browser Anda tidak mendukung GPS. Coba gunakan Chrome atau Safari.');
+      return;
+    }
     setGpsLoading(true);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
@@ -161,8 +175,15 @@ export function Warga() {
         setGpsSource('browser');
         setGpsLoading(false);
       },
-      () => { setGpsLoading(false); alert('Gagal mendapatkan lokasi. Pastikan GPS aktif.'); },
-      { enableHighAccuracy: true, timeout: 10000 }
+      (err) => {
+        setGpsLoading(false);
+        let msg = 'Gagal mendapatkan lokasi.';
+        if (err.code === 1) msg = 'Izin lokasi ditolak. Berikan izin lokasi di pengaturan browser.';
+        else if (err.code === 2) msg = 'GPS tidak tersedia. Pastikan lokasi aktif di perangkat Anda.';
+        else if (err.code === 3) msg = 'GPS timeout. Coba lagi.';
+        alert(msg);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   };
 
