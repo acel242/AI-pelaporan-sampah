@@ -76,7 +76,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_petugas_user or is_admin_user:
         await update.message.reply_text(
-            "📖 Panduan GoBcaEnv - PETUGAS\n\n"
+            "📖 Panduan EcoLapor AI - PETUGAS\n\n"
             "━━━━━━━━ PETUGAS ━━━━━━━━\n"
             "/task - Ambil 1 tugas\n"
             "/list - Lihat semua laporan pending\n"
@@ -92,10 +92,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text(
-            "👋 Halo! Saya GoBcaEnv.\n\n"
-            "Saya adalah asisten pelaporan sampah untuk warga Manado.\n\n"
-            "Cara pakai: Cukup ceritakan lokasi dan Deskripsi sampah yang ingin Anda laporkan.\n\n"
-            "Contoh: 'Ada tumpukan sampah di Jl. Sam Ratulangi dekat lampu merah'"
+            "👋 Halo! Saya EcoLapor AI.\n\n"
+            "Saya adalah asisten pelaporan lingkungan untuk warga Manado.\n\n"
+            "Cara pakai: Cukup ceritakan lokasi dan kondisi lingkungan yang ingin Anda laporkan.\n\n"
+            "Contoh: 'Ada tumpukan sampah di Jl. Sam Ratulangi dekat lampu merah'\n"
+            "Contoh: 'Drainase tersumbat di Jl. Katamso, banjir lagi'"
         )
 
 async def task_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -332,7 +333,7 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
     if not report_id:
         await update.message.reply_text(
             "📸 Foto diterima! Untuk laporan warga, silakan gunakan website:\n"
-            "http://eco-lapor.43.157.235.76.nip.io\n\n"
+            "https://eco-lapor.43.157.235.76.nip.io\n\n"
             "Untuk petugas: Gunakan /foto <id> dulu, baru kirim foto."
         )
         return
@@ -358,7 +359,7 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         import requests
         resp = requests.post(
-            f"{os.getenv('BACKEND_URL', 'http://localhost:5000')}/api/laporan/{report_id}/foto",
+            f"{os.getenv('BACKEND_URL', 'https://eco-lapor.43.157.235.76.nip.io')}/api/laporan/{report_id}/foto",
             json={"foto": foto_data_uri},
             timeout=15
         )
@@ -452,7 +453,7 @@ def main():
     ))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("GoBcaEnv bot starting...")
+    logger.info("EcoLapor AI bot starting...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":

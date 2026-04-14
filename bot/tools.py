@@ -3,6 +3,7 @@ from database import (
     get_reports,
     get_all_reports,
     update_report_status,
+    update_report_priority,
     create_user,
     get_user,
     register_petugas,
