@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Card } from '../components/Card';
 import { MapPin, Clock, FileText, CheckCircle2, X, Eye, Search, AlertTriangle, RefreshCw, BarChart3, ChevronDown, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import 'leaflet/dist/leaflet.css';
 
 const API_BASE = '/api';
 
@@ -31,11 +32,44 @@ function DetailModal({ item, onClose, onRefresh }) {
   const [saving, setSaving] = useState(false);
   const [gallery, setGallery] = useState([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const miniMapRef = useRef(null);
+  const miniMapInstanceRef = useRef(null);
 
-  // Fetch gallery on open
+  // Parse coords from lokasi
+  const parseCoords = (lokasi) => {
+    if (!lokasi) return null;
+    const parts = lokasi.split(',').map(s => parseFloat(s.trim()));
+    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && Math.abs(parts[0]) <= 90 && Math.abs(parts[1]) <= 180) {
+      return { lat: parts[0], lng: parts[1] };
+    }
+    return null;
+  };
+  const coords = parseCoords(item.lokasi);
+
+  // Fetch gallery
   useEffect(() => {
     fetch(`${API_BASE}/laporan/${item.id}/gallery`).then(r => r.json()).then(d => setGallery(d.photos || [])).catch(() => {});
   }, [item.id]);
+
+  // Mini map
+  useEffect(() => {
+    if (!coords || !miniMapRef.current || miniMapInstanceRef.current) return;
+    import('leaflet').then(L => {
+      delete L.Icon.Default.prototype._getIconUrl;
+      L.Icon.Default.mergeOptions({
+        iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+        iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+        shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+      });
+      const map = L.map(miniMapRef.current).setView([coords.lat, coords.lng], 16);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map);
+      L.marker([coords.lat, coords.lng]).addTo(map).bindPopup(`<b>${item.nama}</b><br>${item.lokasi}`).openPopup();
+      miniMapInstanceRef.current = map;
+      // Invalidate size after modal renders
+      setTimeout(() => map.invalidateSize(), 200);
+    });
+    return () => { if (miniMapInstanceRef.current) { miniMapInstanceRef.current.remove(); miniMapInstanceRef.current = null; } };
+  }, [coords]);
 
   const handleUploadAfter = async (e) => {
     const file = e.target.files[0];
@@ -97,6 +131,20 @@ function DetailModal({ item, onClose, onRefresh }) {
             <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Kategori</p><p className="text-slate-700 font-bold">{KATEGORI_LIST.find(k => k.value === item.kategori)?.icon || '📌'} {item.kategori || 'Sampah'}</p></div>
           </div>
           <div className="flex items-start gap-3"><MapPin size={18} className="text-rose-500 mt-0.5 flex-shrink-0" /><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Lokasi</p><p className="text-slate-700 font-medium">{item.lokasi}</p></div></div>
+
+          {/* Mini Map */}
+          {coords && (
+            <div>
+              <p className="text-xs font-semibold text-slate-400 uppercase mb-2">📍 Lokasi di Peta</p>
+              <div ref={miniMapRef} className="w-full h-48 rounded-xl overflow-hidden border border-slate-200" style={{zIndex: 0}} />
+            </div>
+          )}
+          {!coords && (
+            <div className="bg-slate-50 rounded-xl p-4 text-center">
+              <p className="text-sm text-slate-400">Lokasi tidak memiliki koordinat GPS</p>
+              <p className="text-xs text-slate-300 mt-1">Upload foto dengan GPS aktif agar lokasi muncul di peta</p>
+            </div>
+          )}
           <div><p className="text-xs font-semibold text-slate-400 uppercase mb-2">Deskripsi</p><p className="text-slate-600 leading-relaxed">{item.deskripsi}</p></div>
           {item.foto && (() => { const src = resolveImgSrc(item.foto); return src ? <div><p className="text-xs font-semibold text-slate-400 uppercase mb-2">Foto Sebelum (Laporan)</p><img src={src} alt="Dokumentasi" className="w-full h-48 object-cover rounded-xl bg-slate-100" onError={e => { e.target.style.display='none'; }} /></div> : null; })()}
 
