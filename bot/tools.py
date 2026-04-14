@@ -14,6 +14,7 @@ from database import (
     get_statistics,
     get_report_by_id,
     update_report_note,
+    update_report_foto,
 )
 
 # ─────────────────────────────────────────────
@@ -23,19 +24,21 @@ async def submit_report_tool(
     nama: str,
     lokasi: str,
     deskripsi: str,
-    user_id: int
+    user_id: int,
+    kategori: str = "Sampah"
 ) -> dict:
     """
-    Submit a new waste report (laporan sampah).
-    Use this when user wants to report garbage/waste in their area.
+    Submit a new environmental report.
+    Use this when user wants to report any environmental issue.
     """
-    result = await db_submit_report(user_id, nama, lokasi, deskripsi)
+    result = await db_submit_report(user_id, nama, lokasi, deskripsi, kategori=kategori)
     return {
         "success": True,
         "message": (
             f"✅ Laporan berhasil dikirim!\n\n"
             f"📋 ID Laporan: #{result['id']}\n"
             f"📍 Lokasi: {lokasi}\n"
+            f"📂 Kategori: {kategori}\n"
             f"📝 Status: Menunggu\n\n"
             f"Tim kami akan segera menindaklanjuti."
         ),
@@ -337,10 +340,9 @@ async def register_petugas_tool(telegram_id: int, nama: str) -> dict:
 # ─────────────────────────────────────────────
 # TOOL: Get Task (Petugas)
 # ─────────────────────────────────────────────
-async def get_task_tool(telegram_id: int) -> dict:
+async def get_task_tool(telegram_id: int, task_id: int = None) -> dict:
     """
-    Get the highest priority pending task for petugas.
-    Returns the oldest report with highest priority.
+    Get a specific pending task by ID, or the highest priority task if no ID specified.
     Petugas only.
     """
     # Check if registered
@@ -349,17 +351,31 @@ async def get_task_tool(telegram_id: int) -> dict:
             "success": False,
             "message": "❌ Anda belum terdaftar sebagai petugas.\nGunakan /start untuk mendaftar."
         }
-    
+
     pending = await get_pending_reports()
-    
+
     if not pending:
         return {
             "success": True,
             "message": "✅ Tidak ada laporan yang menunggu.\nSemua laporan sudah ditangani!"
         }
-    
-    task = pending[0]  # Already sorted by priority then oldest
-    
+
+    # If specific task_id requested, find that task
+    if task_id is not None:
+        task = next((t for t in pending if t['id'] == task_id), None)
+        if not task:
+            return {
+                "success": False,
+                "message": f"❌ Laporan #{task_id} tidak ditemukan atau sudah selesai."
+            }
+        # Auto-update status: Menunggu -> Diproses when petugas claims this specific task
+        await update_report_status(task['id'], "Diproses")
+    else:
+        task = pending[0]  # Default: oldest highest priority
+
+    # Auto-update status: Menunggu -> Diproses when petugas claims task
+    await update_report_status(task['id'], "Diproses")
+
     # Format the task message
     prioritas_emoji = "🔴" if task.get('prioritas') == 'Tinggi' else "🟡" if task.get('prioritas') == 'Sedang' else "🟢"
     
@@ -448,7 +464,11 @@ async def upload_foto_tool(report_id: int, foto_url: str, telegram_id: int) -> d
         }
     
     foto = await add_foto_bukti(report_id, foto_url)
-    
+
+    # NOTE: laporan.foto is already updated by backend's /api/laporan/<id>/foto
+    # which saves the static file and sets the proper static URL.
+    # We only store file_id in foto_bukti for Telegram reference.
+
     return {
         "success": True,
         "message": (

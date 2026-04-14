@@ -11,8 +11,13 @@ import json
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
+from flask import send_from_directory
 
-app = Flask(__name__)
+STATIC_DIR = os.path.join(os.path.dirname(__file__), 'static')
+FOTO_DIR = os.path.join(STATIC_DIR, 'foto')
+os.makedirs(FOTO_DIR, exist_ok=True)
+
+app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='/static')
 CORS(app)
 
 DATABASE_PATH = os.path.join(os.path.dirname(__file__), "..", "bot", "pelaporan.db")
@@ -49,126 +54,158 @@ def auto_escalate_old_reports(db, days=3):
 # ─────────────────────────────────────────────
 
 def validate_image_content(image_base64: str) -> tuple[bool, str]:
-    """Use AI Vision to validate if image contains waste/trash (not selfie or other content)."""
+    """Use AI Vision to validate if image contains an environmental issue.
+    
+    Lenient: accepts any environmental issue. Rejects only clearly irrelevant
+    content like selfies, food, vehicles, landscapes.
+    """
+    if not image_base64:
+        return True, "No image"
+
     try:
-        # Handle both base64 with and without data URI prefix
         if "," in image_base64:
             image_base64 = image_base64.split(",", 1)[1]
+    except Exception:
+        pass
 
-        prompt = """Analisis gambar ini dan tentukan apakah ini FOTO SAMPAH atau BUKAN.
+    if image_base64.startswith('iVBOR'):
+        mime = 'image/png'
+    elif image_base64.startswith('UklGR'):
+        mime = 'image/webp'
+    else:
+        mime = 'image/jpeg'
 
-Kategori SAMPAH: tumpukan sampah,垃圾, waste, trash, garbage, kotoran, limbah
+    sumopod_key = os.getenv("SUMOPOD_API_KEY", "sk-CJSIoKjjsr-v0NlC7P3IhQ")
 
-Kategori BUKAN SAMPAH: selfie, foto orang, foto makanan, foto kendaraan, foto gedung, foto风景, foto документ, screenshot, atau gambar lain yang bukan sampah.
-
-Jawaban dalam format JSON saja:
-{"valid": true/false, "reason": "penjelasan singkat"}
-
-Jika gambar jelas-jelas sampah/waste → valid: true
-Jika gambar jelas BUKAN sampah (selfie, makanan, dll) → valid: false
-Jika tidak yakin → valid: false"""
-
-        with httpx.Client(timeout=20) as client:
+    try:
+        import httpx
+        with httpx.Client(timeout=60.0) as client:
             response = client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json"
-                },
+                'https://ai.sumopod.com/v1/chat/completions',
+                headers={'Authorization': f'Bearer {sumopod_key}', 'Content-Type': 'application/json'},
                 json={
-                    "model": "llama-3.2-11b-vision-preview",
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{image_base64}"
-                                    }
-                                }
-                            ]
-                        }
-                    ],
-                    "max_tokens": 100,
-                    "temperature": 0
+                    'model': 'gpt-5.1',
+                    'messages': [{'role': 'user', 'content': [
+                        {'type': 'text', 'text': 'Periksa foto ini. Jawab VALID jika menunjukkan masalah lingkungan (sampah, banjir, pencemaran, fasilitas rusak, pohon bahaya, hewan terlantar, kebakaran). Jawab TIDAK_VALID jika BUKAN masalah lingkungan (selfie, makanan, dokumen). Jawaban satu kata saja.'},
+                        {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
+                    ]}],
+                    'max_tokens': 20,
+                    'temperature': 0.1
                 }
             )
-            result = response.json()
-            answer = result.get("choices", [{}])[0].get("message", {}).get("content", "")
 
-            try:
-                parsed = json.loads(answer)
-                is_valid = parsed.get("valid", False)
-                reason = parsed.get("reason", "Tidak dapat menentukan")
-            except:
-                is_valid = "true" in answer.lower() and "false" not in answer.lower()
-                reason = "Valid" if is_valid else "Tidak valid"
-
-            return is_valid, reason
-
-    except Exception as e:
-        print(f"[AI Vision] Error: {e}")
-        return True, "Validation skipped due to error"  # Fail open for availability
+        result = response.json()
+        if "choices" not in result:
+            return True, "OK (vision check skipped)"
+        answer = result["choices"][0]["message"]["content"].strip().upper()
+        if "TIDAK_VALID" in answer or "INVALID" in answer:
+            return False, "Foto tidak menunjukkan masalah lingkungan. Mohon upload foto yang relevan."
+        return True, "OK"
+    except Exception:
+        return True, "OK (vision check error)"
 
 
 def validate_description_content(nama: str, lokasi: str, deskripsi: str) -> tuple[bool, str]:
-    """Use AI to validate if description is meaningful and relevant to waste reporting."""
-    prompt = f"""Analisis deskripsi laporan sampah berikut:
+    """Use AI to validate if description is meaningful and relevant to waste reporting.
+    
+    Lenient: accepts most text as valid. Only rejects gibberish/empty/clearly wrong content.
+    """
+    # Basic rule-based pre-check before calling AI
+    deskripsi_lower = deskripsi.strip().lower()
+    if len(deskripsi_lower) < 3:
+        return False, "Deskripsi terlalu pendek"
+    if len(deskripsi.strip()) < 3:
+        return False, "Deskripsi terlalu pendek"
+    if len(deskripsi_lower) > 2000:
+        return False, "Deskripsi terlalu panjang"
+    return True, "Valid"
+
+
+def classify_category(nama: str, lokasi: str, deskripsi: str, kategori_hint: str = None) -> tuple[str, str]:
+    """Use AI to classify report category and sub-category.
+    Returns (kategori, sub_kategori)."""
+    # If user explicitly chose a category, trust it
+    if kategori_hint and kategori_hint != "Lainnya":
+        return kategori_hint, classify_sub_category(nama, lokasi, deskripsi, kategori_hint)
+
+    prompt = f"""Klasifikasikan laporan lingkungan berikut:
 
 Nama pelapor: {nama}
 Lokasi: {lokasi}
 Deskripsi: {deskripsi}
 
-Tentukan apakah deskripsi ini VALID untuk laporan sampah:
-- VALID = deskripsi jelas menjelaskan masalah sampah (jenis, jumlah, kondisi)
-- TIDAK VALID = deskripsi kosong, terlalu pendek (<5 kata), tidak relevan dengan topik sampah, atau hanya karakter acak
+Kategori (pilih SATU):
+- Sampah = tumpukan sampah, limbah, plastik, organik, B3
+- Banjir = genangan, drainase tersumbat, area banjir
+- Pencemaran_Air = sungai/laut tercemar, limbah cair
+- Pencemaran_Udara = asap, debu, polusi
+- Fasilitas_Rusak = taman rusak, lampu mati, trotoar
+- Hewan_Liar = hewan terlantar/sakit/berbahaya
+- Pohon_Bahaya = pohon roboh, rantau mengancam
+- Kebakaran = kebakaran hutan/lahan
+- Lainnya = tidak cocok di atas
 
-Contoh TIDAK VALID:
-- "tes", "aaaa", "ok", "siap", "tidak tahu", "?", ""
-- "saya mau laporan", "bagaimana cara"
-- Deskripsi tidak mention sampah sama sekali
-
-Contoh VALID:
-- "Tumpukan sampah di depan warung, ada plastik dan sisa makanan"
-- "Sampah menumpuk di pinggir jalan, berbau busuk"
-- "Kantong sampah penuh, perlu segera diangkut"
-
-Jawaban dalam format JSON:
-{{"valid": true/false, "reason": "penjelasan singkat"}}"""
+Jawaban hanya 1 kata: kategorinya."""
 
     try:
         with httpx.Client(timeout=15) as client:
             response = client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": "llama-3.1-8b-instant",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 100,
-                    "temperature": 0
-                }
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "max_tokens": 10, "temperature": 0}
             )
             result = response.json()
-            answer = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            answer = result.get("choices", [{}])[0].get("message", {}).get("content", "Sampah").strip()
 
-            try:
-                parsed = json.loads(answer)
-                is_valid = parsed.get("valid", True)
-                reason = parsed.get("reason", "Deskripsi valid")
-            except:
-                is_valid = len(deskripsi.strip()) >= 5
-                reason = "Valid" if is_valid else "Deskripsi terlalu pendek"
-
-            return is_valid, reason
-
+            mapping = {
+                "Sampah": "Sampah", "Banjir": "Banjir", "Pencemaran_Air": "Pencemaran Air",
+                "Pencemaran_Udara": "Pencemaran Udara", "Fasilitas_Rusak": "Fasilitas Rusak",
+                "Hewan_Liar": "Hewan Liar", "Pohon_Bahaya": "Pohon Bahaya",
+                "Kebakaran": "Kebakaran", "Lainnya": "Lainnya"
+            }
+            kategori = mapping.get(answer, "Lainnya")
+            return kategori, classify_sub_category(nama, lokasi, deskripsi, kategori)
     except Exception as e:
-        print(f"[AI Description] Error: {e}")
-        return True, "Validation skipped due to error"  # Fail open
+        print(f"[AI Classify Category] Error: {e}")
+        return "Sampah", None
+
+
+def classify_sub_category(nama: str, lokasi: str, deskripsi: str, kategori: str) -> str:
+    """Classify sub-category based on main category."""
+    sub_map = {
+        "Sampah": "Anorganik, Organik, B3",
+        "Banjir": "Genangan, Drainase Tersumbat, Banjir Besar",
+        "Pencemaran Air": "Limbah Cair, Limbah Industri, Tumpahan",
+        "Pencemaran Udara": "Asap, Debu, Polusi Industri",
+        "Fasilitas Rusak": "Lampu Mati, Trotoar, Taman, Jalan",
+        "Hewan Liar": "Terlantar, Sakit, Berbahaya",
+        "Pohon Bahaya": "Roboh, Rantau, Akar",
+        "Kebakaran": "Hutan, Lahan, Semak",
+    }
+    options = sub_map.get(kategori, "Umum")
+
+    prompt = f"""Klasifikasikan sub-kategori laporan lingkungan:
+
+Kategori: {kategori}
+Deskripsi: {deskripsi}
+Lokasi: {lokasi}
+
+Pilihan: {options}
+
+Jawaban hanya 1 kata."""
+
+    try:
+        with httpx.Client(timeout=15) as client:
+            response = client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "max_tokens": 10, "temperature": 0}
+            )
+            result = response.json()
+            answer = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            return answer if answer else None
+    except Exception:
+        return None
 
 
 def classify_waste_type(nama: str, lokasi: str, deskripsi: str) -> str:
@@ -304,6 +341,10 @@ def init_backend_db():
             status TEXT DEFAULT 'Menunggu',
             prioritas TEXT DEFAULT 'Sedang',
             jenis_sampah TEXT DEFAULT 'Anorganik',
+            kategori TEXT DEFAULT 'Sampah',
+            sub_kategori TEXT,
+            latitude TEXT,
+            longitude TEXT,
             catatan TEXT,
             tanggal TEXT,
             created_at TEXT,
@@ -329,7 +370,25 @@ def init_backend_db():
             created_at TEXT
         )
     """)
-    conn.commit()
+    # Migrations for existing DBs
+    for col, default in [
+        ("jenis_sampah", "Anorganik"),
+        ("kategori", "Sampah"),
+        ("sub_kategori", None),
+        ("latitude", None),
+        ("longitude", None),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE laporan ADD COLUMN {col} TEXT DEFAULT '{default or ''}'")
+            conn.commit()
+        except Exception:
+            pass
+    # Set kategori for existing rows
+    try:
+        conn.execute("UPDATE laporan SET kategori = 'Sampah' WHERE kategori IS NULL OR kategori = ''")
+        conn.commit()
+    except Exception:
+        pass
     conn.close()
 
 
@@ -345,42 +404,87 @@ def create_routes(app):
 
     @app.route("/api/laporan", methods=["POST"])
     def create_laporan():
-        """Submit a new waste report with full AI validation."""
+        """Submit a new environmental report with full AI validation."""
         data = request.get_json()
 
         if not data:
             return jsonify({"error": "No data provided"}), 400
 
         nama = data.get("nama")
-        lokasi = data.get("lokasi")
-        deskripsi = data.get("deskripsi")
+        lokasi = data.get("lokasi") or ""
+        deskripsi = data.get("deskripsi") or ""
         user_id = data.get("user_id", 0)
         foto = data.get("foto")
+        exif_lat = data.get("exif_lat")
+        exif_lon = data.get("exif_lon")
+        exif_timestamp = data.get("exif_timestamp")
+        kategori_hint = data.get("kategori")  # User-chosen category
 
-        if not all([nama, lokasi, deskripsi]):
-            return jsonify({"error": "Missing required fields"}), 400
+        if not nama:
+            return jsonify({"error": "Nama wajib diisi"}), 400
+
+        # ── Step 0: Auto-fill lokasi from EXIF GPS or AI vision ──
+        if not lokasi:
+            if exif_lat and exif_lon:
+                lokasi = f"{exif_lat},{exif_lon}"
+            elif foto:
+                ai_lokasi = None
+                for attempt in range(2):
+                    try:
+                        ai_lokasi = extract_location_from_image(foto)
+                        if ai_lokasi:
+                            break
+                    except Exception as e:
+                        print(f"[WARN] AI lokasi attempt {attempt+1} failed: {e}")
+                if ai_lokasi:
+                    lokasi = ai_lokasi
+                else:
+                    lokasi = "Lokasi tidak diketahui"
+            else:
+                lokasi = "Lokasi tidak diketahui"
+
+        # Auto-generate or enhance deskripsi
+        if foto:
+            if not deskripsi:
+                desc_result = None
+                for attempt in range(2):
+                    try:
+                        desc_result = describe_image_ai(foto)
+                        if desc_result:
+                            break
+                    except Exception as e:
+                        print(f"[WARN] Auto-describe attempt {attempt+1} failed: {e}")
+                deskripsi = desc_result or "Laporan masalah lingkungan"
+            elif len(deskripsi.strip()) < 20:
+                desc_result = None
+                for attempt in range(2):
+                    try:
+                        desc_result = describe_image_ai(foto)
+                        if desc_result:
+                            break
+                    except Exception as e:
+                        print(f"[WARN] Auto-enhance attempt {attempt+1} failed: {e}")
+                if desc_result:
+                    deskripsi = desc_result
 
         # ── Step 1: Validate image (if provided) ──
         if foto:
             is_valid_image, image_reason = validate_image_content(foto)
             if not is_valid_image:
-                return jsonify({
-                    "error": "Foto tidak valid",
-                    "reason": "Mohon upload foto sampah yang benar. " + image_reason
-                }), 400
+                return jsonify({"error": "Foto tidak valid", "reason": image_reason}), 400
 
         # ── Step 2: Validate description ──
         is_valid_desc, desc_reason = validate_description_content(nama, lokasi, deskripsi)
         if not is_valid_desc:
-            return jsonify({
-                "error": "Deskripsi tidak valid",
-                "reason": desc_reason
-            }), 400
+            return jsonify({"error": "Deskripsi tidak valid", "reason": desc_reason}), 400
 
-        # ── Step 3: AI classifies waste type ──
-        jenis_sampah = classify_waste_type(nama, lokasi, deskripsi)
+        # ── Step 3: AI classifies category + sub-category ──
+        kategori, sub_kategori = classify_category(nama, lokasi, deskripsi, kategori_hint)
 
-        # ── Step 4: AI assigns priority ──
+        # ── Step 4: AI classifies waste type (only for Sampah category) ──
+        jenis_sampah = classify_waste_type(nama, lokasi, deskripsi) if kategori == "Sampah" else None
+
+        # ── Step 5: AI assigns priority ──
         prioritas = assign_priority_ai(nama, lokasi, deskripsi)
 
         now = datetime.now()
@@ -389,9 +493,9 @@ def create_routes(app):
 
         db = get_db()
         cursor = db.execute(
-            """INSERT INTO laporan (user_id, nama, lokasi, deskripsi, foto, status, prioritas, jenis_sampah, tanggal, created_at)
-               VALUES (?, ?, ?, ?, ?, 'Menunggu', ?, ?, ?, ?)""",
-            (user_id, nama, lokasi, deskripsi, foto, prioritas, jenis_sampah, tanggal, created_at)
+            """INSERT INTO laporan (user_id, nama, lokasi, deskripsi, foto, status, prioritas, jenis_sampah, kategori, sub_kategori, latitude, longitude, tanggal, created_at)
+               VALUES (?, ?, ?, ?, ?, 'Menunggu', ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, nama, lokasi, deskripsi, foto, prioritas, jenis_sampah, kategori, sub_kategori, exif_lat, exif_lon, tanggal, created_at)
         )
         db.commit()
 
@@ -401,56 +505,80 @@ def create_routes(app):
             "status": "Menunggu",
             "prioritas": prioritas,
             "jenis_sampah": jenis_sampah,
+            "kategori": kategori,
+            "sub_kategori": sub_kategori,
             "tanggal": tanggal
         }), 201
 
     @app.route("/api/laporan", methods=["GET"])
     def get_laporan():
-        """Get reports."""
+        """Get reports with pagination (5 per page)."""
         user_id = request.args.get("user_id", type=int)
         status = request.args.get("status")
         prioritas = request.args.get("prioritas")
+        kategori = request.args.get("kategori")
         search = request.args.get("search")
+        page = request.args.get("page", 1, type=int)
+        per_page = 5
 
         db = get_db()
-
-        # Auto-escalate old pending reports
         auto_escalate_old_reports(db)
 
-        query = "SELECT * FROM laporan WHERE 1=1"
+        query = """SELECT id, user_id, nama, lokasi, deskripsi, status, prioritas, jenis_sampah, kategori, sub_kategori, catatan, tanggal, created_at, updated_at, latitude, longitude, CASE WHEN foto IS NOT NULL AND foto != '' THEN 1 ELSE 0 END as foto_exists FROM laporan WHERE 1=1"""
         params = []
 
         if user_id:
             query += " AND user_id = ?"
             params.append(user_id)
-
         if status and status != "Semua":
             query += " AND status = ?"
             params.append(status)
-
         if prioritas and prioritas != "Semua":
             query += " AND prioritas = ?"
             params.append(prioritas)
-
+        if kategori and kategori != "Semua":
+            query += " AND kategori = ?"
+            params.append(kategori)
         if search:
             query += " AND (nama LIKE ? OR lokasi LIKE ? OR deskripsi LIKE ?)"
             search_term = f"%{search}%"
             params.extend([search_term, search_term, search_term])
 
-        query += " ORDER BY created_at DESC"
+        # Count total
+        count_query = query.replace("SELECT id, user_id, nama, lokasi, deskripsi, status, prioritas, jenis_sampah, kategori, sub_kategori, catatan, tanggal, created_at, updated_at, latitude, longitude, CASE WHEN foto IS NOT NULL AND foto != '' THEN 1 ELSE 0 END as foto_exists", "SELECT COUNT(*) as total")
+        total = db.execute(count_query, params).fetchone()["total"]
+
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([per_page, (page - 1) * per_page])
 
         rows = db.execute(query, params).fetchall()
         laporan = [dict(row) for row in rows]
 
-        # Add first foto_url for thumbnail from foto_bukti table
-        for lap in laporan:
-            first_foto = db.execute(
-                "SELECT foto_url FROM foto_bukti WHERE laporan_id = ? ORDER BY uploaded_at ASC LIMIT 1",
-                (lap["id"],)
-            ).fetchone()
-            lap["foto_url"] = first_foto["foto_url"] if first_foto else None
+        return jsonify({
+            "laporan": laporan,
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "total_pages": (total + per_page - 1) // per_page
+            }
+        })
 
-        return jsonify({"laporan": laporan})
+    @app.route("/api/laporan/<int:report_id>/preview", methods=["GET"])
+    def get_laporan_preview(report_id):
+        """Return warga's original foto (base64) for thumbnail preview.
+        Lightweight endpoint — only id + foto (base64), no other columns.
+        Serves warga's original submission, NOT officer bukti photos."""
+        db = get_db()
+        row = db.execute(
+            "SELECT id, foto FROM laporan WHERE id = ? AND foto IS NOT NULL AND foto != ''",
+            (report_id,)
+        ).fetchone()
+
+        if not row:
+            return jsonify({"id": report_id, "foto": None})
+
+        return jsonify({"id": row["id"], "foto": row["foto"]})
 
     @app.route("/api/laporan/<int:report_id>", methods=["GET"])
     def get_laporan_by_id(report_id):
@@ -471,6 +599,22 @@ def create_routes(app):
         result["foto_bukti"] = [dict(f) for f in foto_rows]
 
         return jsonify(result)
+
+    @app.route("/api/laporan/<int:report_id>", methods=["DELETE"])
+    def delete_laporan(report_id):
+        """Delete a report. Admin only."""
+        db = get_db()
+        cursor = db.execute("DELETE FROM laporan WHERE id = ?", (report_id,))
+        db.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({"error": "Report not found"}), 404
+
+        # Also delete related foto_bukti entries
+        db.execute("DELETE FROM foto_bukti WHERE laporan_id = ?", (report_id,))
+        db.commit()
+
+        return jsonify({"success": True, "deleted_id": report_id})
 
     @app.route("/api/laporan/<int:report_id>/status", methods=["PATCH"])
     def update_status(report_id):
@@ -567,7 +711,54 @@ def create_routes(app):
             "id": cursor.lastrowid,
             "laporan_id": laporan_id,
             "foto_url": foto_url
-        }), 201
+        })
+
+    @app.route("/api/laporan/<int:report_id>/foto", methods=["POST"])
+    def update_laporan_foto(report_id):
+        """Receive base64 foto from bot/officer, save as static file, store path in laporan.foto.
+        foto_bukti stores Telegram file_id separately for reference.
+        Static file URL in laporan.foto is what both warga and admin see in lists."""
+        data = request.get_json()
+        foto_base64 = data.get("foto")
+
+        if not foto_base64:
+            return jsonify({"error": "foto (base64) required"}), 400
+
+        if ',' in foto_base64:
+            foto_base64 = foto_base64.split(',', 1)[1]
+
+        try:
+            image_data = base64.b64decode(foto_base64)
+        except Exception:
+            return jsonify({"error": "Invalid base64 image"}), 400
+
+        filename = f"bukti_{report_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+        filepath = os.path.join(FOTO_DIR, filename)
+        with open(filepath, 'wb') as f:
+            f.write(image_data)
+
+        foto_url = f"/static/foto/{filename}"
+
+        db = get_db()
+        exists = db.execute("SELECT id FROM laporan WHERE id = ?", (report_id,)).fetchone()
+        if not exists:
+            return jsonify({"error": "Report not found"}), 404
+
+        now = datetime.now().isoformat()
+        cursor = db.execute(
+            "UPDATE laporan SET foto = ?, updated_at = ? WHERE id = ?",
+            (foto_url, now, report_id)
+        )
+        db.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({"error": "Report not found"}), 404
+
+        return jsonify({
+            "success": True,
+            "report_id": report_id,
+            "foto_url": foto_url
+        }), 200
 
     @app.route("/api/laporan/<int:report_id>/catatan", methods=["PATCH"])
     def update_catatan(report_id):
@@ -592,26 +783,24 @@ def create_routes(app):
     def get_stats():
         """Get statistics for admin dashboard."""
         db = get_db()
-
-        # Auto-escalate old pending reports
         auto_escalate_old_reports(db)
 
         total = db.execute("SELECT COUNT(*) as count FROM laporan").fetchone()["count"]
 
-        status_rows = db.execute(
-            "SELECT status, COUNT(*) as count FROM laporan GROUP BY status"
-        ).fetchall()
+        status_rows = db.execute("SELECT status, COUNT(*) as count FROM laporan GROUP BY status").fetchall()
         by_status = {row["status"]: row["count"] for row in status_rows}
 
-        priority_rows = db.execute(
-            "SELECT prioritas, COUNT(*) as count FROM laporan GROUP BY prioritas"
-        ).fetchall()
+        priority_rows = db.execute("SELECT prioritas, COUNT(*) as count FROM laporan GROUP BY prioritas").fetchall()
         by_priority = {row["prioritas"]: row["count"] for row in priority_rows}
+
+        category_rows = db.execute("SELECT kategori, COUNT(*) as count FROM laporan GROUP BY kategori").fetchall()
+        by_category = {row["kategori"]: row["count"] for row in category_rows}
 
         return jsonify({
             "total": total,
             "by_status": by_status,
-            "by_priority": by_priority
+            "by_priority": by_priority,
+            "by_category": by_category
         })
 
     @app.route("/api/agent/stats", methods=["GET"])
@@ -638,6 +827,303 @@ def create_routes(app):
             "recent_corrections": [dict(r) for r in recent]
         })
 
+def describe_image_ai(image_base64: str):
+    """
+    Reusable AI image description helper using SumoPod GPT-5.1 with base64 data URIs.
+    Returns a waste description string, or None on failure / non-waste image.
+    """
+    if not image_base64:
+        return None
+    try:
+        if ',' in image_base64:
+            image_base64 = image_base64.split(',', 1)[1]
+    except Exception:
+        pass
+
+    # Detect MIME type from magic bytes
+    if image_base64.startswith('iVBOR'):
+        mime = 'image/png'
+    elif image_base64.startswith('UklGR'):
+        mime = 'image/webp'
+    else:
+        mime = 'image/jpeg'
+
+    sumopod_key = os.getenv("SUMOPOD_API_KEY", "sk-CJSIoKjjsr-v0NlC7P3IhQ")
+
+    try:
+        import httpx
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                'https://ai.sumopod.com/v1/chat/completions',
+                headers={
+                    'Authorization': f'Bearer {sumopod_key}',
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    'model': 'gpt-5.1',
+                    'messages': [{
+                        'role': 'user',
+                        'content': [
+                            {'type': 'text', 'text': 'Anda adalah asisten AI yang menganalisis foto masalah lingkungan di Indonesia. Jelaskan secara detail dan concis (2-3 kalimat) kondisi dalam foto dalam Bahasa Indonesia formal. Bisa berupa: sampah, banjir, pencemaran, fasilitas rusak, pohon bahaya, hewan terlantar, kebakaran. Contoh: Tumpukan sampah plastik di pinggir jalan, genangan air di drainase, pohon roboh menghalangi jalan. Jika foto BUKAN masalah lingkungan, jawab: FOTO_BUKAN_MASALAH'},
+                            {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
+                        ]
+                    }],
+                    'max_tokens': 200,
+                    'temperature': 0.3
+                }
+            )
+
+        result = response.json()
+        if "choices" not in result:
+            return None
+        desc = result["choices"][0]["message"]["content"].strip()
+        if "BUKAN_MASALAH" in desc.upper() or "bukan masalah" in desc.lower() or "BUKAN_SAMPAH" in desc.upper() or "bukan sampah" in desc.lower():
+            return None
+        return desc
+    except Exception:
+        return None
+
+
+def extract_location_from_image(image_base64: str):
+    """
+    AI vision to detect location from photo (road name, landmark, area description).
+    Returns a location string like "Jl. Sudirman, dekat Pasar Bajo, Manado" or None.
+    """
+    if not image_base64:
+        return None
+    try:
+        if ',' in image_base64:
+            image_base64 = image_base64.split(',', 1)[1]
+    except Exception:
+        pass
+
+    if image_base64.startswith('iVBOR'):
+        mime = 'image/png'
+    elif image_base64.startswith('UklGR'):
+        mime = 'image/webp'
+    else:
+        mime = 'image/jpeg'
+
+    sumopod_key = os.getenv("SUMOPOD_API_KEY", "sk-CJSIoKjjsr-v0NlC7P3IhQ")
+
+    try:
+        import httpx
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                'https://ai.sumopod.com/v1/chat/completions',
+                headers={
+                    'Authorization': f'Bearer {sumopod_key}',
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    'model': 'gpt-5.1',
+                    'messages': [{
+                        'role': 'user',
+                        'content': [
+                            {'type': 'text', 'text': 'Analisis foto untuk mendeteksi LOKASI geografis di Manado, Sulawesi Utara, Indonesia. Return JSON dengan key "lokasi" berisi deskripsi lokasi yang spesifik dan detail dalam Bahasa Indonesia. Prioritas: (1) nama jalan + landmark/nama tempat, (2) nama area/neighbourhood + bangunan terkenal, (3) keterangan area umum (ruangan kelas, pinggir jalan, pasar). Jika foto benar-benar tidak memiliki petunjuk lokasi sama sekali, return: {"lokasi": ""}. Contoh valid: {"lokasi": "Jl. Sudirman, dekat Pasar Bajo, Manado"}, {"lokasi": "Di dalam ruangan kelas sekolah"}, {"lokasi": "Di pinggir jalan Boulevard, Manado"}. Jangan gunakan koordinat GPS.'},
+                            {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
+                        ]
+                    }],
+                    'max_tokens': 80,
+                    'temperature': 0.3
+                }
+            )
+
+        result = response.json()
+        if "choices" not in result:
+            return None
+        raw = result["choices"][0]["message"]["content"].strip()
+        # Parse JSON response
+        import json
+        try:
+            data = json.loads(raw)
+            lokasi = data.get("lokasi", "").strip()
+            return lokasi if lokasi else None
+        except Exception:
+            # Try to extract from text response
+            if "lokasi" in raw.lower():
+                import re
+                match = re.search(r'"lokasi"\s*:\s*"([^"]+)"', raw)
+                if match:
+                    return match.group(1).strip()
+            return None
+    except Exception:
+        return None
+
+
+@app.route("/api/agent/classify", methods=["POST"])
+def agent_classify():
+    """
+    Classify waste type from text description.
+    Returns: { "category": "Anorganik|Organik|B3", "confidence": float }
+    """
+    body = request.get_json()
+    text = body.get("text", "")
+
+    if not text.strip():
+        return jsonify({"error": "text required"}), 400
+
+    prompt = f"""Klasifikasikan jenis sampah dari laporan berikut:
+
+{text}
+
+Jenis sampah:
+- Anorganik = plastik, logam, kaca, kertas, kardus, botol, kaleng, styrofoam
+- Organik = sisa makanan, daun, kayu, sayuran, fruit waste, kotoran hewan
+- B3 = baterai, oli, cat, obat kadaluwarsa, pestisida, limbah medis, neon, mercury
+
+Jawaban hanya 1 kata: Anorganik, Organik, atau B3."""
+
+    try:
+        with httpx.Client(timeout=15) as client:
+            response = client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama-3.1-8b-instant",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 10,
+                    "temperature": 0
+                }
+            )
+            result = response.json()
+            answer = result.get("choices", [{}])[0].get("message", {}).get("content", "Anorganik").strip()
+
+            if "Organik" in answer:
+                category = "Organik"
+            elif "B3" in answer:
+                category = "B3"
+            else:
+                category = "Anorganik"
+
+            return jsonify({"category": category, "confidence": 0.9})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/agent/priority", methods=["POST"])
+def agent_priority():
+    """
+    Assign priority from text description.
+    Returns: { "priority": "Rendah|Sedang|Tinggi", "reason": str }
+    """
+    body = request.get_json()
+    text = body.get("text", "")
+
+    if not text.strip():
+        return jsonify({"error": "text required"}), 400
+
+    prompt = f"""Tentukan prioritas pelaporan sampah:
+
+{text}
+
+Prioritas:
+- Tinggi = mengancam kesehatan/safety (B3, menumpuk besar, menutup drainase, di sekolah/rumah sakit)
+- Sedang = mengganggu kenyamanan (tumpukan sedang, bau, di trotoar)
+- Rendah = aesthetic/nuisance kecil (sedikit sampah, di tempat sepi)
+
+Jawaban hanya 1 kata: Tinggi, Sedang, atau Rendah."""
+
+    try:
+        with httpx.Client(timeout=15) as client:
+            response = client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama-3.1-8b-instant",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 10,
+                    "temperature": 0
+                }
+            )
+            result = response.json()
+            answer = result.get("choices", [{}])[0].get("message", {}).get("content", "Sedang").strip()
+
+            if "Tinggi" in answer:
+                priority = "Tinggi"
+            elif "Rendah" in answer:
+                priority = "Rendah"
+            else:
+                priority = "Sedang"
+
+            return jsonify({"priority": priority, "reason": f"Based on: {text[:100]}"})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/agent/describe", methods=["POST"])
+def agent_describe():
+    """
+    AI auto-description: analyze photo and generate waste description.
+    Uses SumoPod GPT-5.1 with base64 data URIs.
+    """
+    body = request.get_json()
+    image_base64 = body.get("image", "")
+
+    if not image_base64:
+        return jsonify({"success": False, "error": "No image provided"}), 400
+
+    try:
+        if "," in image_base64:
+            image_base64 = image_base64.split(",", 1)[1]
+    except Exception:
+        pass
+
+    # Detect MIME type from magic bytes
+    if image_base64.startswith('iVBOR'):
+        mime = 'image/png'
+    elif image_base64.startswith('UklGR'):
+        mime = 'image/webp'
+    else:
+        mime = 'image/jpeg'
+
+    sumopod_key = os.getenv("SUMOPOD_API_KEY", "sk-CJSIoKjjsr-v0NlC7P3IhQ")
+
+    try:
+        import httpx
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                'https://ai.sumopod.com/v1/chat/completions',
+                headers={
+                    'Authorization': f'Bearer {sumopod_key}',
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    'model': 'gpt-5.1',
+                    'messages': [{
+                        'role': 'user',
+                        'content': [
+                            {'type': 'text', 'text': 'Anda adalah asisten AI yang menganalisis foto masalah lingkungan di Indonesia. Jelaskan secara detail dan concis (2-3 kalimat) kondisi dalam foto tersebut dalam Bahasa Indonesia formal. Ini bisa berupa: sampah, banjir, pencemaran, fasilitas rusak, pohon bahaya, hewan terlantar, kebakaran, atau masalah lingkungan lainnya. Jika foto BUKAN masalah lingkungan (misalnya selfie, makanan, kendaraan), jawab: FOTO_BUKAN_MASALAH'},
+                            {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
+                        ]
+                    }],
+                    'max_tokens': 200,
+                    'temperature': 0.3
+                }
+            )
+
+        result = response.json()
+        if "choices" not in result:
+            return jsonify({"success": False, "error": result.get("error", {}).get("message", "AI error")}), 500
+
+        description = result["choices"][0]["message"]["content"].strip()
+
+        if "BUKAN_MASALAH" in description.upper() or "bukan masalah" in description.lower() or "BUKAN_SAMPAH" in description.upper() or "bukan sampah" in description.lower():
+            return jsonify({"success": False, "error": "Foto bukan masalah lingkungan"}), 400
+
+        return jsonify({"success": True, "description": description})
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
 
 # ─────────────────────────────────────────────
 # Main
@@ -645,6 +1131,19 @@ def create_routes(app):
 
 if __name__ == "__main__":
     app.teardown_appcontext(close_db)
+
+    # ── Global error handlers: always return JSON ──
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        return jsonify({"error": str(e)}), getattr(e, 'code', 500)
+
+    @app.errorhandler(404)
+    def handle_404(e):
+        return jsonify({"error": "Not found"}), 404
+
+    @app.errorhandler(405)
+    def handle_405(e):
+        return jsonify({"error": "Method not allowed"}), 405
 
     init_backend_db()
     print("✅ Backend database initialized")

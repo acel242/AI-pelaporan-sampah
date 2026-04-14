@@ -60,11 +60,24 @@ async def init_db():
             ("prioritas", "Sedang"),
             ("catatan", None),
             ("updated_at", None),
+            ("foto", None),
+            ("jenis_sampah", "Anorganik"),
+            ("kategori", "Sampah"),
+            ("sub_kategori", None),
+            ("latitude", None),
+            ("longitude", None),
         ]:
             try:
                 await db.execute(f"ALTER TABLE laporan ADD COLUMN {col} TEXT")
             except aiosqlite.OperationalError:
                 pass  # Column already exists
+        
+        # Migration: set kategori='Sampah' for existing rows
+        try:
+            await db.execute("UPDATE laporan SET kategori = 'Sampah' WHERE kategori IS NULL")
+            await db.commit()
+        except Exception:
+            pass
         
         # Conversation state for password gate
         await db.execute("""
@@ -156,16 +169,16 @@ async def get_all_users() -> list[dict]:
 # ─────────────────────────────────────────────
 # Report Operations
 # ─────────────────────────────────────────────
-async def submit_report(user_id: int, nama: str, lokasi: str, deskripsi: str) -> dict:
+async def submit_report(user_id: int, nama: str, lokasi: str, deskripsi: str, kategori: str = "Sampah", sub_kategori: str = None, latitude: str = None, longitude: str = None, jenis_sampah: str = "Anorganik") -> dict:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         now = datetime.now()
         tanggal = now.strftime("%d/%m/%Y")
         created_at = now.isoformat()
         
         cursor = await db.execute(
-            """INSERT INTO laporan (user_id, nama, lokasi, deskripsi, status, prioritas, tanggal, created_at)
-               VALUES (?, ?, ?, ?, 'Menunggu', 'Sedang', ?, ?)""",
-            (user_id, nama, lokasi, deskripsi, tanggal, created_at)
+            """INSERT INTO laporan (user_id, nama, lokasi, deskripsi, status, prioritas, tanggal, created_at, kategori, sub_kategori, latitude, longitude, jenis_sampah)
+               VALUES (?, ?, ?, ?, 'Menunggu', 'Sedang', ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, nama, lokasi, deskripsi, tanggal, created_at, kategori, sub_kategori, latitude, longitude, jenis_sampah)
         )
         await db.commit()
         
@@ -176,7 +189,12 @@ async def submit_report(user_id: int, nama: str, lokasi: str, deskripsi: str) ->
             "deskripsi": deskripsi,
             "status": "Menunggu",
             "prioritas": "Sedang",
-            "tanggal": tanggal
+            "tanggal": tanggal,
+            "kategori": kategori,
+            "sub_kategori": sub_kategori,
+            "latitude": latitude,
+            "longitude": longitude,
+            "jenis_sampah": jenis_sampah,
         }
 
 async def get_reports(user_id: int) -> list[dict]:
@@ -282,6 +300,17 @@ async def update_report_status(report_id: int, status: str) -> bool:
         await db.commit()
         return cursor.rowcount > 0
 
+async def update_report_foto(report_id: int, foto_url: str) -> bool:
+    """Update the main foto field of a laporan with the bukti photo."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        now = datetime.now().isoformat()
+        cursor = await db.execute(
+            "UPDATE laporan SET foto = ?, updated_at = ? WHERE id = ?",
+            (foto_url, now, report_id)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
 async def update_report_priority(report_id: int, prioritas: str) -> bool:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         now = datetime.now().isoformat()
@@ -309,16 +338,15 @@ async def get_statistics() -> dict:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         db.row_factory = aiosqlite.Row
         
-        total = await db.execute_fetchone("SELECT COUNT(*) as count FROM laporan")[0]
-        
-        status_rows = await db.execute_fetchall(
-            "SELECT status, COUNT(*) as count FROM laporan GROUP BY status"
-        )
+        cursor = await db.execute("SELECT COUNT(*) FROM laporan")
+        total = (await cursor.fetchone())[0]
+
+        cursor = await db.execute("SELECT status, COUNT(*) FROM laporan GROUP BY status")
+        status_rows = await cursor.fetchall()
         by_status = {row[0]: row[1] for row in status_rows}
-        
-        priority_rows = await db.execute_fetchall(
-            "SELECT prioritas, COUNT(*) as count FROM laporan GROUP BY prioritas"
-        )
+
+        cursor = await db.execute("SELECT prioritas, COUNT(*) FROM laporan GROUP BY prioritas")
+        priority_rows = await cursor.fetchall()
         by_priority = {row[0]: row[1] for row in priority_rows}
         
         return {
@@ -326,3 +354,58 @@ async def get_statistics() -> dict:
             "by_status": by_status,
             "by_priority": by_priority
         }
+
+# ─── Conversation Memory Table ────────────────────────────────────────────────
+
+async def init_memory_db():
+    """Create memory table for learned facts."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS conv_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                keyword TEXT,
+                fact TEXT,
+                created_at TEXT
+            )
+        """)
+        await db.commit()
+
+async def add_conv_memory(user_id: int, keyword: str, fact: str):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "INSERT INTO conv_memory (user_id, keyword, fact, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, keyword, fact, datetime.now().isoformat())
+        )
+        await db.commit()
+
+async def search_conv_memory(user_id: int, query: str) -> list:
+    """Search memory for relevant facts."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        rows = await db.execute(
+            """SELECT keyword, fact FROM conv_memory
+               WHERE user_id = ? AND (keyword LIKE ? OR fact LIKE ?)""",
+            (user_id, f"%{query}%", f"%{query}%")
+        )
+        return await rows.fetchall()
+
+async def search_all_memory(query: str) -> list:
+    """Search all memory (admin)."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        rows = await db.execute(
+            """SELECT user_id, keyword, fact FROM conv_memory
+               WHERE keyword LIKE ? OR fact LIKE ?""",
+            (f"%{query}%", f"%{query}%")
+        )
+        return await rows.fetchall()
+
+# Initialize on import
+import asyncio
+try:
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        asyncio.create_task(init_memory_db())
+    else:
+        loop.run_until_complete(init_memory_db())
+except Exception:
+    pass
