@@ -389,6 +389,31 @@ def init_backend_db():
         conn.commit()
     except Exception:
         pass
+    # Create report_photos table for before/after gallery
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS report_photos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            laporan_id INTEGER,
+            photo_type TEXT DEFAULT 'before',
+            foto_url TEXT,
+            caption TEXT,
+            uploaded_at TEXT,
+            FOREIGN KEY (laporan_id) REFERENCES laporan(id)
+        )
+    """)
+    # Create notifications table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            laporan_id INTEGER,
+            user_id INTEGER,
+            message TEXT,
+            type TEXT,
+            is_read INTEGER DEFAULT 0,
+            created_at TEXT
+        )
+    """)
+    conn.commit()
     conn.close()
 
 
@@ -426,7 +451,12 @@ def create_routes(app):
         # ── Step 0: Auto-fill lokasi from EXIF GPS or AI vision ──
         if not lokasi:
             if exif_lat and exif_lon:
-                lokasi = f"{exif_lat},{exif_lon}"
+                # Try reverse geocode first
+                geo_result = reverse_geocode(float(exif_lat), float(exif_lon))
+                if geo_result:
+                    lokasi = geo_result
+                else:
+                    lokasi = f"{exif_lat},{exif_lon}"
             elif foto:
                 ai_lokasi = None
                 for attempt in range(2):
@@ -580,9 +610,55 @@ def create_routes(app):
 
         return jsonify({"id": row["id"], "foto": row["foto"]})
 
+    @app.route("/api/laporan/<int:report_id>/gallery", methods=["GET"])
+    def get_laporan_gallery(report_id):
+        """Get before/after photo gallery for a report."""
+        db = get_db()
+        photos = db.execute(
+            "SELECT * FROM report_photos WHERE laporan_id = ? ORDER BY uploaded_at ASC",
+            (report_id,)
+        ).fetchall()
+        return jsonify({"photos": [dict(p) for p in photos]})
+
+    @app.route("/api/laporan/<int:report_id>/gallery", methods=["POST"])
+    def add_gallery_photo(report_id):
+        """Add a photo to report gallery (before/after)."""
+        data = request.get_json()
+        photo_type = data.get("photo_type", "after")  # before | after
+        foto_base64 = data.get("foto")
+        caption = data.get("caption", "")
+
+        if not foto_base64:
+            return jsonify({"error": "foto required"}), 400
+
+        if ',' in foto_base64:
+            foto_base64 = foto_base64.split(',', 1)[1]
+
+        try:
+            image_data = base64.b64decode(foto_base64)
+        except Exception:
+            return jsonify({"error": "Invalid base64"}), 400
+
+        filename = f"gallery_{report_id}_{photo_type}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+        filepath = os.path.join(FOTO_DIR, filename)
+        with open(filepath, 'wb') as f:
+            f.write(image_data)
+
+        foto_url = f"/static/foto/{filename}"
+        now = datetime.now().isoformat()
+
+        db = get_db()
+        cursor = db.execute(
+            "INSERT INTO report_photos (laporan_id, photo_type, foto_url, caption, uploaded_at) VALUES (?, ?, ?, ?, ?)",
+            (report_id, photo_type, foto_url, caption, now)
+        )
+        db.commit()
+
+        return jsonify({"success": True, "id": cursor.lastrowid, "foto_url": foto_url, "photo_type": photo_type}), 201
+
     @app.route("/api/laporan/<int:report_id>", methods=["GET"])
     def get_laporan_by_id(report_id):
-        """Get single report by ID with foto bukti."""
+        """Get single report by ID with foto bukti and gallery."""
         db = get_db()
         row = db.execute("SELECT * FROM laporan WHERE id = ?", (report_id,)).fetchone()
 
@@ -597,6 +673,13 @@ def create_routes(app):
             (report_id,)
         ).fetchall()
         result["foto_bukti"] = [dict(f) for f in foto_rows]
+
+        # Add gallery (before/after)
+        gallery_rows = db.execute(
+            "SELECT * FROM report_photos WHERE laporan_id = ? ORDER BY uploaded_at ASC",
+            (report_id,)
+        ).fetchall()
+        result["gallery"] = [dict(g) for g in gallery_rows]
 
         return jsonify(result)
 
@@ -1009,6 +1092,45 @@ def extract_location_from_image(image_base64: str):
             return None
     except Exception:
         return None
+
+
+def reverse_geocode(lat: float, lon: float) -> str:
+    """Reverse geocode coordinates to human-readable location using Nominatim (free)."""
+    try:
+        with httpx.Client(timeout=10) as client:
+            response = client.get(
+                "https://nominatim.openstreetmap.org/reverse",
+                params={"lat": lat, "lon": lon, "format": "json", "accept-language": "id"},
+                headers={"User-Agent": "EcoLapor-Manado/1.0"}
+            )
+            if response.status_code == 200:
+                data = response.json()
+                addr = data.get("address", {})
+                # Build a concise location string
+                parts = []
+                if addr.get("road"):
+                    parts.append(addr["road"])
+                if addr.get("suburb") or addr.get("village"):
+                    parts.append(addr.get("suburb") or addr.get("village"))
+                if addr.get("city") or addr.get("town"):
+                    parts.append(addr.get("city") or addr.get("town"))
+                if parts:
+                    return ", ".join(parts)
+                return data.get("display_name", "").split(",")[:3].__str__()
+    except Exception as e:
+        print(f"[Reverse Geocode] Error: {e}")
+    return None
+
+
+@app.route("/api/geocode/reverse", methods=["GET"])
+def geocode_reverse():
+    """Reverse geocode lat,lon to location name."""
+    lat = request.args.get("lat", type=float)
+    lon = request.args.get("lon", type=float)
+    if not lat or not lon:
+        return jsonify({"error": "lat and lon required"}), 400
+    result = reverse_geocode(lat, lon)
+    return jsonify({"location": result, "lat": lat, "lon": lon})
 
 
 @app.route("/api/agent/classify", methods=["POST"])

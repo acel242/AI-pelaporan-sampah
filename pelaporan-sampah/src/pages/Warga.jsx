@@ -69,7 +69,18 @@ export function Warga() {
         if (exif && (exif.latitude || exif.longitude)) {
           const lokasiString = `${exif.latitude.toFixed(6)}, ${exif.longitude.toFixed(6)}`;
           setExifData({ lat: exif.latitude, lon: exif.longitude, timestamp: exif.DateTimeOriginal || exif.CreateDate || null, lokasiString });
-          setFormData(prev => ({ ...prev, lokasi: lokasiString }));
+          // Try reverse geocode
+          try {
+            const geoRes = await fetch(`${API_BASE}/geocode/reverse?lat=${exif.latitude}&lon=${exif.longitude}`);
+            const geoData = await geoRes.json();
+            if (geoData.location) {
+              setFormData(prev => ({ ...prev, lokasi: geoData.location }));
+            } else {
+              setFormData(prev => ({ ...prev, lokasi: lokasiString }));
+            }
+          } catch (geoErr) {
+            setFormData(prev => ({ ...prev, lokasi: lokasiString }));
+          }
         }
       } catch (exifErr) {
         console.warn('EXIF extraction failed:', exifErr.message);

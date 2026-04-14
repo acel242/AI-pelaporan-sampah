@@ -29,6 +29,34 @@ function DetailModal({ item, onClose, onRefresh }) {
   const [catatan, setCatatan] = useState(item.catatan || '');
   const [prioritas, setPrioritas] = useState(item.prioritas);
   const [saving, setSaving] = useState(false);
+  const [gallery, setGallery] = useState([]);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  // Fetch gallery on open
+  useEffect(() => {
+    fetch(`${API_BASE}/laporan/${item.id}/gallery`).then(r => r.json()).then(d => setGallery(d.photos || [])).catch(() => {});
+  }, [item.id]);
+
+  const handleUploadAfter = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploadingPhoto(true);
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const res = await fetch(`${API_BASE}/laporan/${item.id}/gallery`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ foto: ev.target.result, photo_type: 'after', caption: 'Foto penanganan' })
+        });
+        if (res.ok) {
+          const d = await res.json();
+          setGallery(prev => [...prev, { id: d.id, foto_url: d.foto_url, photo_type: 'after', caption: 'Foto penanganan', uploaded_at: new Date().toISOString() }]);
+          onRefresh();
+        }
+      } finally { setUploadingPhoto(false); }
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleStatusUpdate = async (newStatus) => {
     setSaving(true);
@@ -70,7 +98,34 @@ function DetailModal({ item, onClose, onRefresh }) {
           </div>
           <div className="flex items-start gap-3"><MapPin size={18} className="text-rose-500 mt-0.5 flex-shrink-0" /><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Lokasi</p><p className="text-slate-700 font-medium">{item.lokasi}</p></div></div>
           <div><p className="text-xs font-semibold text-slate-400 uppercase mb-2">Deskripsi</p><p className="text-slate-600 leading-relaxed">{item.deskripsi}</p></div>
-          {item.foto && (() => { const src = resolveImgSrc(item.foto); return src ? <div><p className="text-xs font-semibold text-slate-400 uppercase mb-2">Dokumentasi</p><img src={src} alt="Dokumentasi" className="w-full h-48 object-cover rounded-xl bg-slate-100" onError={e => { e.target.style.display='none'; }} /></div> : null; })()}
+          {item.foto && (() => { const src = resolveImgSrc(item.foto); return src ? <div><p className="text-xs font-semibold text-slate-400 uppercase mb-2">Foto Sebelum (Laporan)</p><img src={src} alt="Dokumentasi" className="w-full h-48 object-cover rounded-xl bg-slate-100" onError={e => { e.target.style.display='none'; }} /></div> : null; })()}
+
+          {/* Gallery: Before/After */}
+          {(gallery.length > 0 || item.status !== 'Menunggu') && (
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-slate-400 uppercase">Galeri Before/After</p>
+              {gallery.length > 0 && (
+                <div className="grid grid-cols-2 gap-3">
+                  {gallery.map(g => (
+                    <div key={g.id} className="relative rounded-xl overflow-hidden bg-slate-100">
+                      <img src={g.foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + g.foto_url : g.foto_url} alt={g.photo_type} className="w-full h-32 object-cover" onError={e => { e.target.style.display='none'; }} />
+                      <span className={`absolute bottom-1 left-1 px-2 py-0.5 rounded text-xs font-bold text-white ${g.photo_type === 'before' ? 'bg-amber-500' : 'bg-green-500'}`}>{g.photo_type === 'before' ? '📷 Sebelum' : '✅ Sesudah'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Upload After Photo */}
+              {item.status !== 'Menunggu' && (
+                <div>
+                  <label className="flex items-center justify-center gap-2 px-4 py-3 bg-green-50 border border-green-200 border-dashed rounded-xl text-sm font-medium text-green-700 hover:bg-green-100 cursor-pointer transition-colors">
+                    <span>{uploadingPhoto ? 'Uploading...' : '+ Upload Foto Penanganan (After)'}</span>
+                    <input type="file" accept="image/*" className="hidden" onChange={handleUploadAfter} disabled={uploadingPhoto} />
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="space-y-2">
             <p className="text-xs font-semibold text-slate-400 uppercase">Ubah Prioritas</p>
             <div className="flex gap-2">
