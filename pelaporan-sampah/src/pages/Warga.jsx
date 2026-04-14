@@ -240,21 +240,31 @@ export function Warga() {
   useEffect(() => { fetchReports(page); }, [page, fetchReports]);
   useEffect(() => { if (reportId) fetchReports(1); }, [reportId, fetchReports]);
 
-  // Open detail with gallery
+  // Open detail with before/after gallery
   const openDetail = async (item) => {
     setSelectedItem(item);
     setSelectedGallery([]);
     try {
-      const [previewRes, galleryRes] = await Promise.all([
-        fetch(`${API_BASE}/laporan/${item.id}/preview`),
-        fetch(`${API_BASE}/laporan/${item.id}/gallery`)
-      ]);
-      const previewData = await previewRes.json();
-      const galleryData = await galleryRes.json();
-      setSelectedItem({ ...item, foto: previewData.foto });
-      setSelectedGallery(galleryData.photos || []);
-    } catch {
-      // fallback, just show what we have
+      // Use full detail endpoint which includes foto + gallery
+      const res = await fetch(`${API_BASE}/laporan/${item.id}`);
+      const data = await res.json();
+      setSelectedItem(data);
+      setSelectedGallery(data.gallery || []);
+    } catch (err) {
+      console.warn('Failed to load detail:', err);
+      // Fallback: try preview + gallery separately
+      try {
+        const [previewRes, galleryRes] = await Promise.all([
+          fetch(`${API_BASE}/laporan/${item.id}/preview`),
+          fetch(`${API_BASE}/laporan/${item.id}/gallery`)
+        ]);
+        const previewData = await previewRes.json();
+        const galleryData = await galleryRes.json();
+        setSelectedItem({ ...item, foto: previewData.foto });
+        setSelectedGallery(galleryData.photos || []);
+      } catch {
+        // Just show what we have from the list
+      }
     }
   };
 
@@ -473,7 +483,7 @@ export function Warga() {
               )}
 
               {/* No after photo yet */}
-              {selectedGallery.filter(g => g.photo_type === 'after').length === 0 && selectedItem.status !== 'Selesai' && (
+              {selectedGallery.filter(g => g.photo_type === 'after').length === 0 && (
                 <div className="bg-slate-50 rounded-xl p-4 text-center">
                   <p className="text-sm text-slate-400">Belum ada foto penanganan</p>
                   <p className="text-xs text-slate-300 mt-1">Foto "Sesudah" akan muncul setelah petugas menangani laporan ini</p>

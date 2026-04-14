@@ -824,9 +824,8 @@ def create_routes(app):
 
     @app.route("/api/laporan/<int:report_id>/foto", methods=["POST"])
     def update_laporan_foto(report_id):
-        """Receive base64 foto from bot/officer, save as static file, store path in laporan.foto.
-        foto_bukti stores Telegram file_id separately for reference.
-        Static file URL in laporan.foto is what both warga and admin see in lists."""
+        """Receive base64 foto from bot/officer, save as static file.
+        Adds to report_photos as 'after' (penanganan), does NOT replace warga's original photo."""
         data = request.get_json()
         foto_base64 = data.get("foto")
 
@@ -853,15 +852,20 @@ def create_routes(app):
         if not exists:
             return jsonify({"error": "Report not found"}), 404
 
+        # Save as 'after' photo in report_photos gallery (NOT replacing laporan.foto)
         now = datetime.now().isoformat()
         cursor = db.execute(
-            "UPDATE laporan SET foto = ?, updated_at = ? WHERE id = ?",
-            (foto_url, now, report_id)
+            "INSERT INTO report_photos (laporan_id, photo_type, foto_url, caption, uploaded_at) VALUES (?, ?, ?, ?, ?)",
+            (report_id, "after", foto_url, "Foto penanganan petugas", now)
         )
         db.commit()
 
-        if cursor.rowcount == 0:
-            return jsonify({"error": "Report not found"}), 404
+        # Also store in foto_bukti for backward compat
+        db.execute(
+            "INSERT INTO foto_bukti (laporan_id, foto_url, uploaded_at) VALUES (?, ?, ?)",
+            (report_id, foto_url, now)
+        )
+        db.commit()
 
         return jsonify({
             "success": True,
