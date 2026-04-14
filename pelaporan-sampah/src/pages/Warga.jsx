@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { Card } from '../components/Card';
-import { CheckCircle2, UploadCloud, X, Trash2, Camera, MapPin, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CheckCircle2, UploadCloud, X, Trash2, Camera, MapPin, Clock, ChevronLeft, ChevronRight, Navigation } from 'lucide-react';
 
 const API_BASE = '/api';
 
@@ -38,13 +38,45 @@ export function Warga() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [exifData, setExifData] = useState(null);
   const [deskripsiOtomatis, setDeskripsiOtomatis] = useState(false);
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [gpsSource, setGpsSource] = useState(null); // 'browser' | 'exif' | null
   const [myReports, setMyReports] = useState([]);
   const [loadingReports, setLoadingReports] = useState(true);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [selectedGallery, setSelectedGallery] = useState([]);
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState({ page: 1, per_page: 5, total: 0, total_pages: 1 });
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
+
+  // ── Auto-detect browser GPS on mount ──
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    if (formData.lokasi) return; // already filled
+    setGpsLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        try {
+          const geoRes = await fetch(`${API_BASE}/geocode/reverse?lat=${lat}&lon=${lon}`);
+          const geoData = await geoRes.json();
+          if (geoData.location) {
+            setFormData(prev => ({ ...prev, lokasi: geoData.location }));
+          } else {
+            setFormData(prev => ({ ...prev, lokasi: `${lat.toFixed(6)}, ${lon.toFixed(6)}` }));
+          }
+        } catch {
+          setFormData(prev => ({ ...prev, lokasi: `${lat.toFixed(6)}, ${lon.toFixed(6)}` }));
+        }
+        setExifData(prev => prev || { lat, lon, lokasiString: `${lat.toFixed(6)}, ${lon.toFixed(6)}` });
+        setGpsSource('browser');
+        setGpsLoading(false);
+      },
+      () => { setGpsLoading(false); }, // permission denied or error
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, []);
 
   const processPhoto = async (file) => {
     if (!file) return;
@@ -53,13 +85,12 @@ export function Warga() {
 
     setFoto(file);
     setDeskripsiOtomatis(false);
-    setExifData(null);
 
     const reader = new FileReader();
     reader.onload = async (e) => {
       setFotoPreview(e.target.result);
 
-      // 1. Extract EXIF GPS
+      // 1. Extract EXIF GPS from photo
       try {
         const exifr = (await import('exifr')).default;
         const exif = await exifr.parse(e.target.result, {
@@ -69,7 +100,7 @@ export function Warga() {
         if (exif && (exif.latitude || exif.longitude)) {
           const lokasiString = `${exif.latitude.toFixed(6)}, ${exif.longitude.toFixed(6)}`;
           setExifData({ lat: exif.latitude, lon: exif.longitude, timestamp: exif.DateTimeOriginal || exif.CreateDate || null, lokasiString });
-          // Try reverse geocode
+          // Photo GPS overrides browser GPS (more accurate for the actual location)
           try {
             const geoRes = await fetch(`${API_BASE}/geocode/reverse?lat=${exif.latitude}&lon=${exif.longitude}`);
             const geoData = await geoRes.json();
@@ -78,9 +109,10 @@ export function Warga() {
             } else {
               setFormData(prev => ({ ...prev, lokasi: lokasiString }));
             }
-          } catch (geoErr) {
+          } catch {
             setFormData(prev => ({ ...prev, lokasi: lokasiString }));
           }
+          setGpsSource('exif');
         }
       } catch (exifErr) {
         console.warn('EXIF extraction failed:', exifErr.message);
@@ -108,7 +140,31 @@ export function Warga() {
   };
 
   const handleDrop = (e) => { e.preventDefault(); setIsDragging(false); processPhoto(e.dataTransfer.files[0]); };
-  const handleRemoveFoto = () => { setFoto(null); setFotoPreview(null); setExifData(null); setDeskripsiOtomatis(false); if (fileInputRef.current) fileInputRef.current.value = ''; };
+  const handleRemoveFoto = () => { setFoto(null); setFotoPreview(null); setDeskripsiOtomatis(false); if (fileInputRef.current) fileInputRef.current.value = ''; };
+
+  // Manual GPS refresh button
+  const refreshGps = () => {
+    if (!navigator.geolocation) return;
+    setGpsLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        try {
+          const geoRes = await fetch(`${API_BASE}/geocode/reverse?lat=${lat}&lon=${lon}`);
+          const geoData = await geoRes.json();
+          setFormData(prev => ({ ...prev, lokasi: geoData.location || `${lat.toFixed(6)}, ${lon.toFixed(6)}` }));
+        } catch {
+          setFormData(prev => ({ ...prev, lokasi: `${lat.toFixed(6)}, ${lon.toFixed(6)}` }));
+        }
+        setExifData({ lat, lon, lokasiString: `${lat.toFixed(6)}, ${lon.toFixed(6)}` });
+        setGpsSource('browser');
+        setGpsLoading(false);
+      },
+      () => { setGpsLoading(false); alert('Gagal mendapatkan lokasi. Pastikan GPS aktif.'); },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -133,6 +189,7 @@ export function Warga() {
         setFormData({ nama: '', lokasi: '', deskripsi: '', kategori: 'Sampah' });
         setExifData(null);
         setDeskripsiOtomatis(false);
+        setGpsSource(null);
         handleRemoveFoto();
         setTimeout(() => navigate('/'), 2000);
       } else {
@@ -161,6 +218,24 @@ export function Warga() {
 
   useEffect(() => { fetchReports(page); }, [page, fetchReports]);
   useEffect(() => { if (reportId) fetchReports(1); }, [reportId, fetchReports]);
+
+  // Open detail with gallery
+  const openDetail = async (item) => {
+    setSelectedItem(item);
+    setSelectedGallery([]);
+    try {
+      const [previewRes, galleryRes] = await Promise.all([
+        fetch(`${API_BASE}/laporan/${item.id}/preview`),
+        fetch(`${API_BASE}/laporan/${item.id}/gallery`)
+      ]);
+      const previewData = await previewRes.json();
+      const galleryData = await galleryRes.json();
+      setSelectedItem({ ...item, foto: previewData.foto });
+      setSelectedGallery(galleryData.photos || []);
+    } catch {
+      // fallback, just show what we have
+    }
+  };
 
   const statusColor = (s) => {
     if (s === 'Menunggu') return 'bg-amber-100 text-amber-700';
@@ -213,12 +288,29 @@ export function Warga() {
             </div>
           </div>
 
-          <Input
-            label={<span className="flex items-center gap-2">Lokasi Kejadian {exifData && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">📍 dari GPS foto</span>}</span>}
-            placeholder="Contoh: Jl. Melati Gg. 2, Pasar Rebo (opsional jika upload foto dengan GPS)"
-            value={formData.lokasi}
-            onChange={(e) => setFormData({...formData, lokasi: e.target.value})}
-          />
+          {/* Lokasi with GPS auto-detect */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-semibold text-slate-700">
+                Lokasi Kejadian
+                {gpsSource === 'browser' && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium ml-2">📍 GPS browser</span>}
+                {gpsSource === 'exif' && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium ml-2">📍 GPS foto</span>}
+              </label>
+              <button type="button" onClick={refreshGps} disabled={gpsLoading}
+                className="flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 cursor-pointer disabled:opacity-50">
+                <Navigation size={14} className={gpsLoading ? 'animate-spin' : ''} />
+                {gpsLoading ? 'Mencari...' : 'Deteksi GPS'}
+              </button>
+            </div>
+            <input
+              type="text"
+              placeholder="Lokasi otomatis dari GPS, atau ketik manual..."
+              value={formData.lokasi}
+              onChange={(e) => setFormData({...formData, lokasi: e.target.value})}
+              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            />
+          </div>
+
           <Input
             type="textarea"
             label={<span className="flex items-center gap-2">Deskripsi Detail {deskripsiOtomatis && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">✨ Otomatis dari AI</span>}</span>}
@@ -277,32 +369,6 @@ export function Warga() {
       <div>
         <h3 className="text-xl font-bold text-slate-900 mb-4">📋 Laporan Terbaru</h3>
 
-        {/* Detail Modal */}
-        {selectedItem && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-              <div className="sticky top-0 bg-white rounded-t-2xl border-b border-slate-100 p-6 flex items-center justify-between">
-                <h3 className="text-xl font-bold text-slate-900">Laporan #{selectedItem.id}</h3>
-                <button onClick={() => setSelectedItem(null)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"><X size={20} className="text-slate-500" /></button>
-              </div>
-              <div className="p-6 space-y-4">
-                {selectedItem.foto && (() => { const src = resolveImgSrc(selectedItem.foto); return src ? <img src={src} alt="Dokumentasi" className="w-full rounded-xl object-contain max-h-64 bg-slate-100" onError={e => { e.target.style.display='none'; }} /> : null; })()}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Status</p><p className="font-bold text-slate-700">{selectedItem.status}</p></div>
-                  <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Kategori</p><p className="font-bold text-slate-700">{kategoriIcon(selectedItem.kategori)} {selectedItem.kategori || 'Sampah'}</p></div>
-                  <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Prioritas</p><p className="font-bold text-slate-700">{selectedItem.prioritas || '-'}</p></div>
-                  <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Tanggal</p><p className="font-bold text-slate-700">{selectedItem.tanggal}</p></div>
-                </div>
-                <div className="flex items-start gap-3"><MapPin size={18} className="text-rose-500 mt-0.5 flex-shrink-0" /><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Lokasi</p><p className="text-slate-700 font-medium">{selectedItem.lokasi}</p></div></div>
-                <div className="flex items-start gap-3"><Clock size={18} className="text-blue-500 mt-0.5 flex-shrink-0" /><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Deskripsi</p><p className="text-slate-700 font-medium">{selectedItem.deskripsi}</p></div></div>
-              </div>
-              <div className="sticky bottom-0 bg-white rounded-b-2xl border-t border-slate-100 p-6">
-                <button onClick={() => setSelectedItem(null)} className="w-full py-3 rounded-xl font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer">Tutup</button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {loadingReports ? (
           <div className="text-center py-8 text-slate-400">Memuat...</div>
         ) : myReports.length === 0 ? (
@@ -314,7 +380,7 @@ export function Warga() {
           <>
             <div className="space-y-3">
               {myReports.map(item => (
-                <div key={item.id} onClick={async () => { try { const res = await fetch(`/api/laporan/${item.id}/preview`); const data = await res.json(); setSelectedItem({ ...item, foto: data.foto }); } catch(e) { setSelectedItem(item); } }}
+                <div key={item.id} onClick={() => openDetail(item)}
                   className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-start gap-4 cursor-pointer hover:shadow-md transition-shadow">
                   {item.foto_exists ? (
                     <div className="p-2 bg-green-50 rounded-lg flex-shrink-0"><Camera size={20} className="text-green-600" /></div>
@@ -335,25 +401,80 @@ export function Warga() {
               ))}
             </div>
 
-            {/* Pagination */}
             {pagination.total_pages > 1 && (
               <div className="flex items-center justify-center gap-2 mt-6">
                 <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
-                  className="p-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">
-                  <ChevronLeft size={18} />
-                </button>
-                <span className="text-sm text-slate-600 font-medium">
-                  Hal {page} dari {pagination.total_pages}
-                </span>
+                  className="p-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-30 cursor-pointer"><ChevronLeft size={18} /></button>
+                <span className="text-sm text-slate-600 font-medium">Hal {page} dari {pagination.total_pages}</span>
                 <button onClick={() => setPage(p => Math.min(pagination.total_pages, p + 1))} disabled={page >= pagination.total_pages}
-                  className="p-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer">
-                  <ChevronRight size={18} />
-                </button>
+                  className="p-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-30 cursor-pointer"><ChevronRight size={18} /></button>
               </div>
             )}
           </>
         )}
       </div>
+
+      {/* Detail Modal with Before/After Gallery */}
+      {selectedItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white rounded-t-2xl border-b border-slate-100 p-6 flex items-center justify-between z-10">
+              <h3 className="text-xl font-bold text-slate-900">Laporan #{selectedItem.id}</h3>
+              <button onClick={() => setSelectedItem(null)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"><X size={20} className="text-slate-500" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              {/* Before photo (original report) */}
+              {selectedItem.foto && (() => { const src = resolveImgSrc(selectedItem.foto); return src ? (
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase mb-2">📷 Foto Sebelum (Saat Laporan)</p>
+                  <img src={src} alt="Sebelum" className="w-full rounded-xl object-contain max-h-64 bg-slate-100" onError={e => { e.target.style.display='none'; }} />
+                </div>
+              ) : null; })()}
+
+              {/* After photos from gallery */}
+              {selectedGallery.filter(g => g.photo_type === 'after').length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase mb-2">✅ Foto Sesudah (Penanganan)</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {selectedGallery.filter(g => g.photo_type === 'after').map(g => (
+                      <div key={g.id} className="relative rounded-xl overflow-hidden bg-slate-100">
+                        <img
+                          src={g.foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + g.foto_url : g.foto_url}
+                          alt="Sesudah"
+                          className="w-full h-32 object-cover"
+                          onError={e => { e.target.style.display='none'; }}
+                        />
+                        <span className="absolute bottom-1 left-1 px-2 py-0.5 rounded text-xs font-bold text-white bg-green-500">✅ Sesudah</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* No after photo yet */}
+              {selectedGallery.filter(g => g.photo_type === 'after').length === 0 && selectedItem.status !== 'Selesai' && (
+                <div className="bg-slate-50 rounded-xl p-4 text-center">
+                  <p className="text-sm text-slate-400">Belum ada foto penanganan</p>
+                  <p className="text-xs text-slate-300 mt-1">Foto "Sesudah" akan muncul setelah petugas menangani laporan ini</p>
+                </div>
+              )}
+
+              {/* Info grid */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Status</p><p className={`font-bold ${selectedItem.status === 'Menunggu' ? 'text-amber-600' : selectedItem.status === 'Diproses' ? 'text-blue-600' : 'text-green-600'}`}>{selectedItem.status}</p></div>
+                <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Kategori</p><p className="font-bold text-slate-700">{kategoriIcon(selectedItem.kategori)} {selectedItem.kategori || 'Sampah'}</p></div>
+                <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Prioritas</p><p className="font-bold text-slate-700">{selectedItem.prioritas || '-'}</p></div>
+                <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Tanggal</p><p className="font-bold text-slate-700">{selectedItem.tanggal}</p></div>
+              </div>
+              <div className="flex items-start gap-3"><MapPin size={18} className="text-rose-500 mt-0.5 flex-shrink-0" /><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Lokasi</p><p className="text-slate-700 font-medium">{selectedItem.lokasi}</p></div></div>
+              <div className="flex items-start gap-3"><Clock size={18} className="text-blue-500 mt-0.5 flex-shrink-0" /><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Deskripsi</p><p className="text-slate-700 font-medium">{selectedItem.deskripsi}</p></div></div>
+            </div>
+            <div className="sticky bottom-0 bg-white rounded-b-2xl border-t border-slate-100 p-6">
+              <button onClick={() => setSelectedItem(null)} className="w-full py-3 rounded-xl font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer">Tutup</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
