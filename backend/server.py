@@ -618,7 +618,7 @@ def create_routes(app):
 
     @app.route("/api/laporan/<int:report_id>/status", methods=["PATCH"])
     def update_status(report_id):
-        """Update report status."""
+        """Update report status and trigger notification."""
         data = request.get_json()
         new_status = data.get("status")
 
@@ -626,12 +626,38 @@ def create_routes(app):
             return jsonify({"error": "Status required"}), 400
 
         db = get_db()
+        # Get old report for notification
+        old_row = db.execute("SELECT status, nama, lokasi, user_id FROM laporan WHERE id = ?", (report_id,)).fetchone()
+        
         now = datetime.now().isoformat()
         db.execute(
             "UPDATE laporan SET status = ?, updated_at = ? WHERE id = ?",
             (new_status, now, report_id)
         )
         db.commit()
+
+        # Store notification in DB for polling
+        if old_row and old_row["status"] != new_status:
+            try:
+                db.execute(
+                    """CREATE TABLE IF NOT EXISTS notifications (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        laporan_id INTEGER,
+                        user_id INTEGER,
+                        message TEXT,
+                        type TEXT,
+                        is_read INTEGER DEFAULT 0,
+                        created_at TEXT
+                    )"""
+                )
+                msg = f"Laporan #{report_id} ({old_row['lokasi']}) status berubah: {old_row['status']} → {new_status}"
+                db.execute(
+                    "INSERT INTO notifications (laporan_id, user_id, message, type, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (report_id, old_row['user_id'], msg, 'status_change', now)
+                )
+                db.commit()
+            except Exception as e:
+                print(f"[Notification] Error: {e}")
 
         return jsonify({"success": True, "status": new_status})
 
@@ -802,6 +828,40 @@ def create_routes(app):
             "by_priority": by_priority,
             "by_category": by_category
         })
+
+    @app.route("/api/notifications", methods=["GET"])
+    def get_notifications():
+        """Get unread notifications."""
+        db = get_db()
+        try:
+            rows = db.execute(
+                "SELECT * FROM notifications WHERE is_read = 0 ORDER BY created_at DESC LIMIT 20"
+            ).fetchall()
+            return jsonify({"notifications": [dict(r) for r in rows]})
+        except Exception:
+            return jsonify({"notifications": []})
+
+    @app.route("/api/notifications/<int:notif_id>/read", methods=["PATCH"])
+    def mark_notification_read(notif_id):
+        """Mark notification as read."""
+        db = get_db()
+        try:
+            db.execute("UPDATE notifications SET is_read = 1 WHERE id = ?", (notif_id,))
+            db.commit()
+        except Exception:
+            pass
+        return jsonify({"success": True})
+
+    @app.route("/api/notifications/read-all", methods=["POST"])
+    def mark_all_notifications_read():
+        """Mark all notifications as read."""
+        db = get_db()
+        try:
+            db.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")
+            db.commit()
+        except Exception:
+            pass
+        return jsonify({"success": True})
 
     @app.route("/api/agent/stats", methods=["GET"])
     def agent_stats():
