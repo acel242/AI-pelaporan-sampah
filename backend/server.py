@@ -245,6 +245,31 @@ Jika tidak yakin atau campuran, pilih yang paling dominan."""
         return "Anorganik"
 
 
+def suggest_solution(kategori: str, lokasi: str, deskripsi: str) -> str:
+    """Use AI to suggest specific contacts/departments for handling a report."""
+    prompt = f"""Berdasarkan laporan lingkungan berikut, berikan rekomendasi penanganan spesifik dalam bahasa Indonesia. Kategori: {kategori}. Lokasi: {lokasi}. Deskripsi: {deskripsi}. Jawab dengan format: 1) Siapa yang harus dihubungi (nama jabatan/instansi), 2) Langkah penanganan singkat, 3) Estimasi waktu penyelesaian. Jawaban maksimal 150 kata."""
+
+    try:
+        with httpx.Client(timeout=30) as client:
+            response = client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "model": "llama-3.1-8b-instant",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 300,
+                    "temperature": 0.3
+                }
+            )
+            result = response.json()
+            answer = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            return answer if answer else "Saran tidak tersedia saat ini."
+    except Exception as e:
+        print(f"[AI Suggest] Error: {e}")
+        return "Saran tidak tersedia saat ini."
+
+
+
 def assign_priority_ai(nama: str, lokasi: str, deskripsi: str, foto_base64: str = None) -> str:
     """Use AI Vision to assign priority based on photo + text.
     Photo is analyzed first for visual severity, then combined with text context.
@@ -473,6 +498,16 @@ def init_backend_db():
             created_at TEXT
         )
     """)
+    # Create votes table for crowd verification
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS votes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            laporan_id INTEGER,
+            voter_name TEXT,
+            created_at TEXT,
+            UNIQUE(laporan_id, voter_name)
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -669,6 +704,11 @@ def create_routes(app):
         rows = db.execute(query, params).fetchall()
         laporan = [dict(row) for row in rows]
 
+        # Add vote_count to each laporan
+        for item in laporan:
+            vote_row = db.execute("SELECT COUNT(*) as cnt FROM votes WHERE laporan_id = ?", (item["id"],)).fetchone()
+            item["vote_count"] = vote_row["cnt"] if vote_row else 0
+
         return jsonify({
             "laporan": laporan,
             "pagination": {
@@ -678,6 +718,114 @@ def create_routes(app):
                 "total_pages": (total + per_page - 1) // per_page
             }
         })
+
+    @app.route("/api/laporan/<int:report_id>/vote", methods=["POST"])
+    def vote_laporan(report_id):
+        """Vote for a report (crowd verification). Auto-escalate priority if votes >= 3."""
+        data = request.get_json()
+        voter_name = data.get("nama") if data else None
+        if not voter_name:
+            return jsonify({"error": "Nama voter required"}), 400
+
+        db = get_db()
+        # Check report exists
+        report = db.execute("SELECT id FROM laporan WHERE id = ?", (report_id,)).fetchone()
+        if not report:
+            return jsonify({"error": "Report not found"}), 404
+
+        now = datetime.now().isoformat()
+        try:
+            db.execute(
+                "INSERT INTO votes (laporan_id, voter_name, created_at) VALUES (?, ?, ?)",
+                (report_id, voter_name, now)
+            )
+            db.commit()
+        except Exception:
+            # UNIQUE constraint = already voted
+            return jsonify({"error": "Anda sudah vote laporan ini"}), 409
+
+        # Get current vote count
+        vote_count = db.execute(
+            "SELECT COUNT(*) as cnt FROM votes WHERE laporan_id = ?", (report_id,)
+        ).fetchone()["cnt"]
+
+        message = f"Vote berhasil! Total: {vote_count}"
+
+        # Auto-escalate if votes >= 3 and not already Tinggi
+        if vote_count >= 3:
+            current_priority = db.execute(
+                "SELECT prioritas FROM laporan WHERE id = ?", (report_id,)
+            ).fetchone()["prioritas"]
+            if current_priority != "Tinggi":
+                db.execute(
+                    "UPDATE laporan SET prioritas = 'Tinggi', updated_at = ? WHERE id = ?",
+                    (now, report_id)
+                )
+                db.commit()
+                message = f"Vote berhasil! Prioritas otomatis dinaikkan ke Tinggi ({vote_count} votes)"
+
+        return jsonify({"votes": vote_count, "message": message})
+
+    @app.route("/api/laporan/<int:report_id>/votes", methods=["GET"])
+    def get_votes(report_id):
+        """Get vote count and voters for a report."""
+        db = get_db()
+        rows = db.execute(
+            "SELECT voter_name, created_at FROM votes WHERE laporan_id = ? ORDER BY created_at DESC",
+            (report_id,)
+        ).fetchall()
+        voters = [{"nama": r["voter_name"], "voted_at": r["created_at"]} for r in rows]
+        return jsonify({"count": len(voters), "voters": voters})
+
+    @app.route("/api/laporan/<int:report_id>/suggest", methods=["GET"])
+    def get_suggestion(report_id):
+        """Get AI solution suggestion for a report."""
+        db = get_db()
+        row = db.execute(
+            "SELECT kategori, lokasi, deskripsi FROM laporan WHERE id = ?",
+            (report_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "Report not found"}), 404
+
+        saran = suggest_solution(
+            row["kategori"] or "Lainnya",
+            row["lokasi"] or "",
+            row["deskripsi"] or ""
+        )
+        return jsonify({"saran": saran})
+
+    @app.route("/api/export/maps", methods=["GET"])
+    def export_maps():
+        """Generate a Google Maps link with all report locations."""
+        db = get_db()
+        rows = db.execute(
+            "SELECT id, nama, lokasi, latitude, longitude FROM laporan WHERE latitude IS NOT NULL AND latitude != '' AND longitude IS NOT NULL AND longitude != ''"
+        ).fetchall()
+
+        if not rows:
+            return jsonify({"url": None, "count": 0, "message": "Tidak ada laporan dengan koordinat GPS"})
+
+        # Build Google Maps directions URL with waypoints
+        coords = []
+        for r in rows:
+            try:
+                lat = float(r["latitude"])
+                lon = float(r["longitude"])
+                coords.append(f"{lat},{lon}")
+            except (ValueError, TypeError):
+                continue
+
+        if not coords:
+            return jsonify({"url": None, "count": 0, "message": "Tidak ada koordinat valid"})
+
+        if len(coords) == 1:
+            url = f"https://www.google.com/maps?q={coords[0]}"
+        else:
+            # Use /dir/ format with all points separated by /
+            url = "https://www.google.com/maps/dir/" + "/".join(coords)
+
+        return jsonify({"url": url, "count": len(coords)})
 
     @app.route("/api/laporan/<int:report_id>/preview", methods=["GET"])
     def get_laporan_preview(report_id):
