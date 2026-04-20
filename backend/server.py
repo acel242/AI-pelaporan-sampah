@@ -136,12 +136,8 @@ Deskripsi: {deskripsi}
 
 Kategori (pilih SATU):
 - Sampah = tumpukan sampah, limbah, plastik, organik, B3
-- Banjir = genangan, drainase tersumbat, area banjir
-- Pencemaran_Air = sungai/laut tercemar, limbah cair
-- Pencemaran_Udara = asap, debu, polusi
 - Fasilitas_Rusak = taman rusak, lampu mati, trotoar
 - Hewan_Liar = hewan terlantar/sakit/berbahaya
-- Pohon_Bahaya = pohon roboh, rantau mengancam
 - Kebakaran = kebakaran hutan/lahan
 - Lainnya = tidak cocok di atas
 
@@ -158,10 +154,8 @@ Jawaban hanya 1 kata: kategorinya."""
             answer = result.get("choices", [{}])[0].get("message", {}).get("content", "Sampah").strip()
 
             mapping = {
-                "Sampah": "Sampah", "Banjir": "Banjir", "Pencemaran_Air": "Pencemaran Air",
-                "Pencemaran_Udara": "Pencemaran Udara", "Fasilitas_Rusak": "Fasilitas Rusak",
-                "Hewan_Liar": "Hewan Liar", "Pohon_Bahaya": "Pohon Bahaya",
-                "Kebakaran": "Kebakaran", "Lainnya": "Lainnya"
+                "Sampah": "Sampah", "Fasilitas_Rusak": "Fasilitas Rusak",
+                "Hewan_Liar": "Hewan Liar", "Kebakaran": "Kebakaran", "Lainnya": "Lainnya"
             }
             kategori = mapping.get(answer, "Lainnya")
             return kategori, classify_sub_category(nama, lokasi, deskripsi, kategori)
@@ -174,12 +168,8 @@ def classify_sub_category(nama: str, lokasi: str, deskripsi: str, kategori: str)
     """Classify sub-category based on main category."""
     sub_map = {
         "Sampah": "Anorganik, Organik, B3",
-        "Banjir": "Genangan, Drainase Tersumbat, Banjir Besar",
-        "Pencemaran Air": "Limbah Cair, Limbah Industri, Tumpahan",
-        "Pencemaran Udara": "Asap, Debu, Polusi Industri",
         "Fasilitas Rusak": "Lampu Mati, Trotoar, Taman, Jalan",
         "Hewan Liar": "Terlantar, Sakit, Berbahaya",
-        "Pohon Bahaya": "Roboh, Rantau, Akar",
         "Kebakaran": "Hutan, Lahan, Semak",
     }
     options = sub_map.get(kategori, "Umum")
@@ -255,9 +245,78 @@ Jika tidak yakin atau campuran, pilih yang paling dominan."""
         return "Anorganik"
 
 
-def assign_priority_ai(nama: str, lokasi: str, deskripsi: str) -> str:
-    """Use AI to assign priority based on report content."""
-    prompt = f"""Analisis laporan sampah berikut dan tentukan prioritas respons:
+def assign_priority_ai(nama: str, lokasi: str, deskripsi: str, foto_base64: str = None) -> str:
+    """Use AI Vision to assign priority based on photo + text.
+    Photo is analyzed first for visual severity, then combined with text context.
+    This ensures small trash (1 bungkus) gets Rendah, not Tinggi."""
+
+    # ── Step 1: If photo available, use Vision AI for deep visual reasoning ──
+    if foto_base64:
+        try:
+            raw_b64 = foto_base64
+            if ',' in raw_b64:
+                raw_b64 = raw_b64.split(',', 1)[1]
+
+            if raw_b64.startswith('iVBOR'):
+                mime = 'image/png'
+            elif raw_b64.startswith('UklGR'):
+                mime = 'image/webp'
+            else:
+                mime = 'image/jpeg'
+
+            sumopod_key = os.getenv("SUMOPOD_API_KEY", "sk-CJSIoKjjsr-v0NlC7P3IhQ")
+
+            vision_prompt = f"""Anda adalah ahli analisis masalah lingkungan. Analisis foto ini SECARA DETAIL dan VISUAL untuk menentukan prioritas penanganan.
+
+KONTEKS TEKS:
+- Pelapor: {nama}
+- Lokasi: {lokasi}
+- Deskripsi: {deskripsi}
+
+ANALISIS VISUAL WAJIB (berdasarkan FOTO, bukan teks):
+1. Estimasi volume sampah: apakah hanya 1-2 bungkus kecil, atau tumpukan besar?
+2. Apakah sampah menghalangi jalan/saluran/fasilitas umum?
+3. Apakah ada tanda-tanda bahaya (B3, tajam, medis)?
+4. Seberapa luas area yang terdampa? (meter persegi estimasi)
+5. Apakah ada dampak kesehatan langsung? (bau, lalat, genangan)
+
+SKALA PRIORITAS (BERDASARKAN VISUAL):
+- RENDAH = sampah sedikit (1-5 bungkus/plastik kecil), tidak menghalangi, tidak bau, area kecil, tidak berbahaya. CONTOH: sebungkus plastik di pinggir jalan, sedikit daun kering, satu botol.
+- SEDANG = tumpukan sampah moderat (6-20 item atau 1-2 karung), ada sedikit bau, area 1-5m², tidak menghalangi jalan utama.
+- TINGGI = sampah masif (tumpukan besar >20 item atau >2 karung), blocking jalan/sungai/drainase, bau menyengat, ada B3/medis, area >5m², atau lokasi sensitif (sekolah, RS, pasar, tempat ibadah).
+
+PENTING: Jika foto menunjukkan sampah yang SEDIKIT (misal hanya 1 bungkus plastik, 1 botol, sekeping kertas), maka WAJIB Rendah MESKIPUN deskripsi mengatakan sebaliknya. FOTO lebih akurat dari teks.
+
+Jawab hanya 1 kata: Rendah, Sedang, atau Tinggi."""
+
+            with httpx.Client(timeout=60.0) as client:
+                response = client.post(
+                    'https://ai.sumopod.com/v1/chat/completions',
+                    headers={'Authorization': f'Bearer {sumopod_key}', 'Content-Type': 'application/json'},
+                    json={
+                        'model': 'gpt-5.1',
+                        'messages': [{'role': 'user', 'content': [
+                            {'type': 'text', 'text': vision_prompt},
+                            {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{raw_b64}'}}
+                        ]}],
+                        'max_tokens': 10,
+                        'temperature': 0
+                    }
+                )
+                result = response.json()
+                answer = result.get("choices", [{}])[0].get("message", {}).get("content", "Sedang").strip()
+
+                if "Tinggi" in answer:
+                    return "Tinggi"
+                elif "Rendah" in answer:
+                    return "Rendah"
+                else:
+                    return "Sedang"
+        except Exception as e:
+            print(f"[AI Vision Priority] Error: {e}, falling back to text-only")
+
+    # ── Step 2: Fallback — text-only reasoning (if no photo) ──
+    prompt = f"""Analisis laporan lingkungan berikut dan tentukan prioritas respons:
 
 Nama pelapor: {nama}
 Lokasi: {lokasi}
@@ -265,11 +324,12 @@ Deskripsi: {deskripsi}
 
 Tentukan prioritas jadi SATU kata saja: Rendah, Sedang, atau Tinggi.
 
-Aturan:
-- "Rendah" = sampah sedikit, tidak blocking, tidak bau, tidak berbahaya
-- "Sedang" = tumpukan sampah biasa, ada sedikit bau atau lalat
-- "Tinggi" = sampah dalam jumlah besar, blocking jalan/fasilitas umum, bau menyengat, ada bahan berbahaya, atau lokasi sensitif (sekolah, rs, pasar)
+Aturan (HATI-HATI jangan terlalu mudah beri Tinggi):
+- "Rendah" = sampah sedikit (1-5 bungkus/plastik kecil), tidak blocking, tidak bau, tidak berbahaya. Satu botol atau sebungkus plastik = RENDAH.
+- "Sedang" = tumpukan sampah biasa (6-20 item), ada sedikit bau atau lalat, tidak blocking jalan utama.
+- "Tinggi" = sampah dalam jumlah BESAR, blocking jalan/fasilitas umum, bau menyengat, ada bahan berbahaya (B3/medis), atau lokasi sensitif (sekolah, RS, pasar).
 
+PENTING: Default ke Rendah jika tidak ada bukti volume besar. Jangan asal Tinggi.
 Jawaban hanya 1 kata: Rendah, Sedang, atau Tinggi."""
 
     try:
@@ -515,7 +575,7 @@ def create_routes(app):
         jenis_sampah = classify_waste_type(nama, lokasi, deskripsi) if kategori == "Sampah" else None
 
         # ── Step 5: AI assigns priority ──
-        prioritas = assign_priority_ai(nama, lokasi, deskripsi)
+        prioritas = assign_priority_ai(nama, lokasi, deskripsi, foto)
 
         now = datetime.now()
         tanggal = now.strftime("%d/%m/%Y")
@@ -528,6 +588,31 @@ def create_routes(app):
             (user_id, nama, lokasi, deskripsi, foto, prioritas, jenis_sampah, kategori, sub_kategori, exif_lat, exif_lon, tanggal, created_at)
         )
         db.commit()
+
+        # Save warga's photo as file and store URL (not base64) in DB
+        foto_url_saved = None
+        if foto:
+            try:
+                raw_b64 = foto
+                if ',' in raw_b64:
+                    raw_b64 = raw_b64.split(',', 1)[1]
+                image_data = base64.b64decode(raw_b64)
+                before_filename = f"before_{cursor.lastrowid}_{now.strftime('%Y%m%d%H%M%S')}.jpg"
+                before_filepath = os.path.join(FOTO_DIR, before_filename)
+                with open(before_filepath, 'wb') as f:
+                    f.write(image_data)
+                foto_url_saved = f"/static/foto/{before_filename}"
+                # Update laporan.foto to file URL instead of huge base64
+                db.execute("UPDATE laporan SET foto = ? WHERE id = ?", (foto_url_saved, cursor.lastrowid))
+                db.commit()
+                # Also save to report_photos gallery
+                db.execute(
+                    "INSERT INTO report_photos (laporan_id, photo_type, foto_url, caption, uploaded_at) VALUES (?, ?, ?, ?, ?)",
+                    (cursor.lastrowid, "before", foto_url_saved, "Foto saat pelaporan", created_at)
+                )
+                db.commit()
+            except Exception as e:
+                print(f"[WARN] Failed to save before photo to gallery: {e}")
 
         return jsonify({
             "success": True,

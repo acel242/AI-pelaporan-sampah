@@ -1,0 +1,104 @@
+@startuml EcoLapor Use Case Diagram
+
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam fontSize 14
+skinparam arrowColor #475569
+skinparam actorBorderColor #16a34a
+skinparam actorBackgroundColor #dcfce7
+skinparam usecaseBorderColor #3b82f6
+skinparam usecaseBackgroundColor #eff6ff
+skinparam usecaseFontSize 13
+
+title EcoLapor Manado - Use Case Diagram
+
+left to right direction
+
+actor "Warga" as W #16a34a
+actor "Admin/Petugas" as A #f59e0b
+actor "AI Agent" as AI #8b5cf6
+
+rectangle "EcoLapor Manado" {
+
+  package "Pelaporan" {
+    usecase "Buat Laporan\n(Web)" as UC1
+    usecase "Buat Laporan\n(Telegram Bot)" as UC2
+    usecase "Upload Foto" as UC3
+    usecase "Pilih Kategori" as UC4
+    usecase "Isi Lokasi\n(GPS Otomatis)" as UC5
+  }
+
+  package "AI Processing" {
+    usecase "Validasi Foto\n(AI Vision)" as UC6
+    usecase "Auto-Deskripsi\n(AI Vision)" as UC7
+    usecase "Klasifikasi Kategori\n(AI)" as UC8
+    usecase "Tentukan Prioritas\n(AI Vision)" as UC9
+    usecase "Auto-Escalate\n(>3 hari)" as UC10
+  }
+
+  package "Monitoring" {
+    usecase "Lihat Dashboard\nStatistik" as UC11
+    usecase "Lihat Peta\nLaporan" as UC12
+    usecase "Lihat Detail\nLaporan" as UC13
+    usecase "Lihat Before/After\nFoto" as UC14
+    usecase "Cek Status\nLaporan" as UC15
+  }
+
+  package "Penanganan" {
+    usecase "Update Status\nLaporan" as UC16
+    usecase "Upload Foto\nPenanganan (After)" as UC17
+    usecase "Tambah Catatan" as UC18
+    usecase "Koreksi Kategori\n/Prioritas" as UC19
+  }
+
+  package "Notifikasi" {
+    usecase "Terima Notifikasi\nStatus" as UC20
+    usecase "Terima Notifikasi\nLaporan Baru" as UC21
+  }
+}
+
+' === Warga ===
+W --> UC1
+W --> UC2
+W --> UC3
+W --> UC4
+W --> UC5
+W --> UC12
+W --> UC13
+W --> UC14
+W --> UC15
+W --> UC20
+
+' === Admin ===
+A --> UC11
+A --> UC12
+A --> UC13
+A --> UC14
+A --> UC16
+A --> UC17
+A --> UC18
+A --> UC19
+A --> UC21
+
+' === AI Agent ===
+AI --> UC6
+AI --> UC7
+AI --> UC8
+AI --> UC9
+AI --> UC10
+
+' === Relationships ===
+UC1 ..> UC3 : <<include>>
+UC1 ..> UC4 : <<include>>
+UC1 ..> UC5 : <<include>>
+UC1 ..> UC6 : <<include>>
+UC1 ..> UC7 : <<extend>>
+UC1 ..> UC8 : <<include>>
+UC1 ..> UC9 : <<include>>
+UC2 ..> UC6 : <<include>>
+UC2 ..> UC8 : <<include>>
+UC2 ..> UC9 : <<include>>
+UC16 ..> UC20 : <<extend>>
+UC19 ..> AI : <<notify>>
+
+@enduml

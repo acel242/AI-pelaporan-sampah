@@ -3,19 +3,15 @@ import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import { Warga } from './pages/Warga';
 import { Admin } from './pages/Admin';
 import { Peta } from './pages/Peta';
-import { LogOut, Leaf, MapPin, FileText, CheckCircle2, Clock, AlertTriangle, Trash2, Plus, ChevronLeft, ChevronRight, Map, Bell } from 'lucide-react';
+import { LogOut, Leaf, MapPin, FileText, CheckCircle2, Clock, AlertTriangle, Trash2, Plus, ChevronLeft, ChevronRight, Map, Bell, X } from 'lucide-react';
 import { Button } from './components/Button';
 
 const API_BASE = '/api';
 
 const KATEGORI_LIST = [
   { value: 'Sampah', label: 'Sampah', icon: '🗑️' },
-  { value: 'Banjir', label: 'Banjir', icon: '🌊' },
-  { value: 'Pencemaran Air', label: 'Pencemaran Air', icon: '💧' },
-  { value: 'Pencemaran Udara', label: 'Pencemaran Udara', icon: '🌫️' },
   { value: 'Fasilitas Rusak', label: 'Fasilitas Rusak', icon: '🔧' },
   { value: 'Hewan Liar', label: 'Hewan Liar', icon: '🐕' },
-  { value: 'Pohon Bahaya', label: 'Pohon Bahaya', icon: '🌳' },
   { value: 'Kebakaran', label: 'Kebakaran', icon: '🔥' },
   { value: 'Lainnya', label: 'Lainnya', icon: '📌' },
 ];
@@ -90,6 +86,13 @@ function Navbar({ role, onLogout }) {
   );
 }
 
+function resolveImgSrc(val) {
+  if (!val) return null;
+  if (val.startsWith('data:')) return val;
+  if (val.startsWith('/')) return 'https://eco-lapor.43.157.235.76.nip.io' + val;
+  return null;
+}
+
 function Dashboard({ onBuatLaporan }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState({ total: 0, by_status: {}, by_priority: {}, by_category: {} });
@@ -97,6 +100,8 @@ function Dashboard({ onBuatLaporan }) {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState({ page: 1, per_page: 5, total: 0, total_pages: 1 });
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [selectedGallery, setSelectedGallery] = useState([]);
 
   const fetchData = (p = 1) => {
     Promise.all([
@@ -125,6 +130,23 @@ function Dashboard({ onBuatLaporan }) {
   };
 
   const kategoriIcon = (k) => KATEGORI_LIST.find(c => c.value === k)?.icon || '📌';
+
+  const openDetail = async (item) => {
+    setSelectedItem(item);
+    setSelectedGallery([]);
+    try {
+      const res = await fetch(`${API_BASE}/laporan/${item.id}`);
+      const data = await res.json();
+      setSelectedItem(data);
+      setSelectedGallery(data.gallery || []);
+    } catch {
+      try {
+        const galleryRes = await fetch(`${API_BASE}/laporan/${item.id}/gallery`);
+        const galleryData = await galleryRes.json();
+        setSelectedGallery(galleryData.photos || []);
+      } catch {}
+    }
+  };
 
   return (
     <div className="max-w-5xl mx-auto space-y-10 pt-8 pb-12">
@@ -172,14 +194,19 @@ function Dashboard({ onBuatLaporan }) {
           <div className="space-y-3">
             {recent.map(item => (
               <div key={item.id} className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-start gap-4">
-                <div className="p-2 bg-slate-50 rounded-lg flex-shrink-0"><Trash2 size={20} className="text-slate-400" /></div>
+                <button onClick={() => openDetail(item)} className="p-3 bg-green-50 rounded-xl flex-shrink-0 hover:bg-green-100 hover:scale-110 transition-all cursor-pointer" title="Lihat detail">
+                  <span className="text-2xl">{kategoriIcon(item.kategori)}</span>
+                </button>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-slate-800 truncate">{item.nama}</p>
                   <p className="text-sm text-slate-500 flex items-center gap-1 mt-0.5"><MapPin size={12} />{item.lokasi}</p>
                   <p className="text-xs text-slate-400 mt-0.5 truncate">{item.deskripsi}</p>
                   <p className="text-xs text-slate-400 mt-0.5">{item.tanggal} {item.kategori && <span className="ml-2">{kategoriIcon(item.kategori)} {item.kategori}</span>}</p>
                 </div>
-                <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${statusColor(item.status)}`}>{item.status}</span>
+                <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${statusColor(item.status)}`}>{item.status}</span>
+                  <button onClick={() => openDetail(item)} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors cursor-pointer flex items-center gap-1">📋 Detail</button>
+                </div>
               </div>
             ))}
           </div>
@@ -192,6 +219,100 @@ function Dashboard({ onBuatLaporan }) {
           )}
         </div>
       )}
+
+      {/* Detail Modal with Before/After Gallery */}
+      {selectedItem && (() => {
+        const beforePhotos = selectedGallery.filter(g => g.photo_type === 'before');
+        const afterPhotos = selectedGallery.filter(g => g.photo_type === 'after');
+        const beforeGallerySrc = beforePhotos.length > 0
+          ? (beforePhotos[0].foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + beforePhotos[0].foto_url : beforePhotos[0].foto_url)
+          : null;
+        const beforeBase64Src = resolveImgSrc(selectedItem.foto);
+        const hasBefore = beforeGallerySrc || beforeBase64Src;
+
+        return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setSelectedItem(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="sticky top-0 bg-white rounded-t-2xl border-b border-slate-100 p-6 flex items-center justify-between z-10">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">Laporan #{selectedItem.id}</h3>
+                <span className={`inline-block mt-1 px-2.5 py-1 rounded-full text-xs font-bold ${statusColor(selectedItem.status)}`}>{selectedItem.status}</span>
+              </div>
+              <button onClick={() => setSelectedItem(null)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"><X size={20} className="text-slate-500" /></button>
+            </div>
+            <div className="p-6 space-y-5">
+              {hasBefore && (
+                <div className="space-y-3">
+                  <p className="text-sm font-bold text-slate-700">📸 Perbandingan Sebelum & Sesudah</p>
+                  <div className={`grid ${afterPhotos.length > 0 ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
+                    <div className="relative">
+                      <div className="absolute top-2 left-2 z-10 px-2 py-1 rounded-lg text-xs font-bold text-white bg-amber-500 shadow">📷 SEBELUM</div>
+                      {beforeGallerySrc ? (
+                        <img src={beforeGallerySrc} alt="Sebelum" className="w-full rounded-xl object-cover h-48 bg-slate-100"
+                          onError={e => { if (beforeBase64Src) { e.target.src = beforeBase64Src; } else { e.target.style.display='none'; e.target.parentElement.querySelector('.fallback-msg').style.display='flex'; } }} />
+                      ) : beforeBase64Src ? (
+                        <img src={beforeBase64Src} alt="Sebelum" className="w-full rounded-xl object-cover h-48 bg-slate-100"
+                          onError={e => { e.target.style.display='none'; e.target.parentElement.querySelector('.fallback-msg').style.display='flex'; }} />
+                      ) : null}
+                      {!hasBefore && (
+                        <div className="w-full rounded-xl h-48 bg-amber-50 flex items-center justify-center fallback-msg">
+                          <p className="text-sm text-amber-400 font-medium">Tidak ada foto</p>
+                        </div>
+                      )}
+                    </div>
+                    {afterPhotos.length > 0 ? (
+                      <div className="relative">
+                        <div className="absolute top-2 left-2 z-10 px-2 py-1 rounded-lg text-xs font-bold text-white bg-green-500 shadow">✅ SESUDAH</div>
+                        <img
+                          src={afterPhotos[0].foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + afterPhotos[0].foto_url : afterPhotos[0].foto_url}
+                          alt="Sesudah" className="w-full rounded-xl object-cover h-48 bg-slate-100" onError={e => { e.target.style.display='none'; }} />
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <div className="absolute top-2 left-2 z-10 px-2 py-1 rounded-lg text-xs font-bold text-white bg-slate-400 shadow">⏳ SESUDAH</div>
+                        <div className="w-full rounded-xl h-48 bg-slate-50 flex flex-col items-center justify-center border-2 border-dashed border-slate-200">
+                          <p className="text-sm text-slate-400 font-medium">Belum ada foto</p>
+                          <p className="text-xs text-slate-300 mt-1">Menunggu penanganan petugas</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {afterPhotos.length > 1 && (
+                    <div>
+                      <p className="text-xs text-slate-400 mb-2">Foto penanganan lainnya:</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {afterPhotos.slice(1).map(g => (
+                          <div key={g.id} className="relative rounded-lg overflow-hidden bg-slate-100">
+                            <img src={g.foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + g.foto_url : g.foto_url} alt="Sesudah" className="w-full h-24 object-cover" onError={e => { e.target.style.display='none'; }} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {!hasBefore && afterPhotos.length === 0 && (
+                <div className="bg-slate-50 rounded-xl p-4 text-center"><p className="text-sm text-slate-400">Tidak ada foto tersedia</p></div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-slate-50 rounded-xl p-3"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Pelapor</p><p className="font-bold text-slate-700">{selectedItem.nama}</p></div>
+                <div className="bg-slate-50 rounded-xl p-3"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Kategori</p><p className="font-bold text-slate-700">{kategoriIcon(selectedItem.kategori)} {selectedItem.kategori || 'Sampah'}</p></div>
+                <div className="bg-slate-50 rounded-xl p-3"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Prioritas</p><p className="font-bold text-slate-700">{selectedItem.prioritas || '-'}</p></div>
+                <div className="bg-slate-50 rounded-xl p-3"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Tanggal</p><p className="font-bold text-slate-700">{selectedItem.tanggal}</p></div>
+              </div>
+              <div className="flex items-start gap-3"><MapPin size={18} className="text-rose-500 mt-0.5 flex-shrink-0" /><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Lokasi</p><p className="text-slate-700 font-medium">{selectedItem.lokasi}</p></div></div>
+              <div className="flex items-start gap-3"><Clock size={18} className="text-blue-500 mt-0.5 flex-shrink-0" /><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Deskripsi</p><p className="text-slate-700 font-medium">{selectedItem.deskripsi}</p></div></div>
+              {selectedItem.catatan && (
+                <div className="flex items-start gap-3"><span className="mt-0.5">📝</span><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Catatan</p><p className="text-slate-700 font-medium">{selectedItem.catatan}</p></div></div>
+              )}
+            </div>
+            <div className="sticky bottom-0 bg-white rounded-b-2xl border-t border-slate-100 p-6">
+              <button onClick={() => setSelectedItem(null)} className="w-full py-3 rounded-xl font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer">Tutup</button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
     </div>
   );
 }

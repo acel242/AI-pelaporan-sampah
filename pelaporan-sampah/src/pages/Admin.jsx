@@ -8,12 +8,8 @@ const API_BASE = '/api';
 const KATEGORI_LIST = [
   { value: 'Semua', label: 'Semua', icon: '📋' },
   { value: 'Sampah', label: 'Sampah', icon: '🗑️' },
-  { value: 'Banjir', label: 'Banjir', icon: '🌊' },
-  { value: 'Pencemaran Air', label: 'Pencemaran Air', icon: '💧' },
-  { value: 'Pencemaran Udara', label: 'Pencemaran Udara', icon: '🌫️' },
   { value: 'Fasilitas Rusak', label: 'Fasilitas Rusak', icon: '🔧' },
   { value: 'Hewan Liar', label: 'Hewan Liar', icon: '🐕' },
-  { value: 'Pohon Bahaya', label: 'Pohon Bahaya', icon: '🌳' },
   { value: 'Kebakaran', label: 'Kebakaran', icon: '🔥' },
   { value: 'Lainnya', label: 'Lainnya', icon: '📌' },
 ];

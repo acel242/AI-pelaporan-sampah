@@ -9,12 +9,8 @@ const API_BASE = '/api';
 
 const KATEGORI_LIST = [
   { value: 'Sampah', label: 'Sampah', icon: '🗑️' },
-  { value: 'Banjir', label: 'Banjir/Drainase', icon: '🌊' },
-  { value: 'Pencemaran Air', label: 'Pencemaran Air', icon: '💧' },
-  { value: 'Pencemaran Udara', label: 'Pencemaran Udara', icon: '🌫️' },
   { value: 'Fasilitas Rusak', label: 'Fasilitas Rusak', icon: '🔧' },
   { value: 'Hewan Liar', label: 'Hewan Liar', icon: '🐕' },
-  { value: 'Pohon Bahaya', label: 'Pohon Bahaya', icon: '🌳' },
   { value: 'Kebakaran', label: 'Kebakaran', icon: '🔥' },
   { value: 'Lainnya', label: 'Lainnya', icon: '📌' },
 ];
@@ -411,13 +407,11 @@ export function Warga() {
           <>
             <div className="space-y-3">
               {myReports.map(item => (
-                <div key={item.id} onClick={() => openDetail(item)}
-                  className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-start gap-4 cursor-pointer hover:shadow-md transition-shadow">
-                  {item.foto_exists ? (
-                    <div className="p-2 bg-green-50 rounded-lg flex-shrink-0"><Camera size={20} className="text-green-600" /></div>
-                  ) : (
-                    <div className="p-2 bg-slate-50 rounded-lg flex-shrink-0"><Trash2 size={20} className="text-slate-400" /></div>
-                  )}
+                <div key={item.id}
+                  className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-start gap-4 hover:shadow-md transition-shadow">
+                  <button onClick={() => openDetail(item)} className="p-3 bg-green-50 rounded-xl flex-shrink-0 hover:bg-green-100 hover:scale-110 transition-all cursor-pointer" title="Lihat detail">
+                    <span className="text-2xl">{kategoriIcon(item.kategori)}</span>
+                  </button>
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-slate-800">#{item.id} — {item.lokasi}</p>
                     <p className="text-sm text-slate-500 mt-0.5 line-clamp-1">{item.deskripsi}</p>
@@ -427,7 +421,12 @@ export function Warga() {
                       {item.prioritas && <span className="ml-2">• {item.prioritas}</span>}
                     </p>
                   </div>
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${statusColor(item.status)}`}>{item.status}</span>
+                  <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${statusColor(item.status)}`}>{item.status}</span>
+                    <button onClick={() => openDetail(item)} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors cursor-pointer flex items-center gap-1">
+                      📋 Detail
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -446,66 +445,117 @@ export function Warga() {
       </div>
 
       {/* Detail Modal with Before/After Gallery */}
-      {selectedItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      {selectedItem && (() => {
+        const beforePhotos = selectedGallery.filter(g => g.photo_type === 'before');
+        const afterPhotos = selectedGallery.filter(g => g.photo_type === 'after');
+        // Priority: gallery before file URL > base64 from laporan.foto
+        const beforeGallerySrc = beforePhotos.length > 0
+          ? (beforePhotos[0].foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + beforePhotos[0].foto_url : beforePhotos[0].foto_url)
+          : null;
+        const beforeBase64Src = resolveImgSrc(selectedItem.foto);
+        const hasBefore = beforeGallerySrc || beforeBase64Src;
+
+        return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setSelectedItem(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="sticky top-0 bg-white rounded-t-2xl border-b border-slate-100 p-6 flex items-center justify-between z-10">
-              <h3 className="text-xl font-bold text-slate-900">Laporan #{selectedItem.id}</h3>
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">Laporan #{selectedItem.id}</h3>
+                <span className={`inline-block mt-1 px-2.5 py-1 rounded-full text-xs font-bold ${statusColor(selectedItem.status)}`}>{selectedItem.status}</span>
+              </div>
               <button onClick={() => setSelectedItem(null)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"><X size={20} className="text-slate-500" /></button>
             </div>
-            <div className="p-6 space-y-4">
-              {/* Before photo (original report) */}
-              {selectedItem.foto && (() => { const src = resolveImgSrc(selectedItem.foto); return src ? (
-                <div>
-                  <p className="text-xs font-semibold text-slate-400 uppercase mb-2">📷 Foto Sebelum (Saat Laporan)</p>
-                  <img src={src} alt="Sebelum" className="w-full rounded-xl object-contain max-h-64 bg-slate-100" onError={e => { e.target.style.display='none'; }} />
-                </div>
-              ) : null; })()}
-
-              {/* After photos from gallery */}
-              {selectedGallery.filter(g => g.photo_type === 'after').length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-slate-400 uppercase mb-2">✅ Foto Sesudah (Penanganan)</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    {selectedGallery.filter(g => g.photo_type === 'after').map(g => (
-                      <div key={g.id} className="relative rounded-xl overflow-hidden bg-slate-100">
+            <div className="p-6 space-y-5">
+              {/* Before/After Photo Comparison */}
+              {hasBefore && (
+                <div className="space-y-3">
+                  <p className="text-sm font-bold text-slate-700">📸 Perbandingan Sebelum & Sesudah</p>
+                  <div className={`grid ${afterPhotos.length > 0 ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
+                    {/* Before */}
+                    <div className="relative">
+                      <div className="absolute top-2 left-2 z-10 px-2 py-1 rounded-lg text-xs font-bold text-white bg-amber-500 shadow">📷 SEBELUM</div>
+                      {beforeGallerySrc ? (
+                        <img src={beforeGallerySrc} alt="Sebelum" className="w-full rounded-xl object-cover h-48 bg-slate-100"
+                          onError={e => { if (beforeBase64Src) { e.target.src = beforeBase64Src; } else { e.target.style.display='none'; e.target.parentElement.querySelector('.fallback-msg').style.display='flex'; } }} />
+                      ) : beforeBase64Src ? (
+                        <img src={beforeBase64Src} alt="Sebelum" className="w-full rounded-xl object-cover h-48 bg-slate-100"
+                          onError={e => { e.target.style.display='none'; e.target.parentElement.querySelector('.fallback-msg').style.display='flex'; }} />
+                      ) : null}
+                      {!hasBefore && (
+                        <div className="w-full rounded-xl h-48 bg-amber-50 flex items-center justify-center fallback-msg">
+                          <p className="text-sm text-amber-400 font-medium">Tidak ada foto</p>
+                        </div>
+                      )}
+                    </div>
+                    {/* After */}
+                    {afterPhotos.length > 0 ? (
+                      <div className="relative">
+                        <div className="absolute top-2 left-2 z-10 px-2 py-1 rounded-lg text-xs font-bold text-white bg-green-500 shadow">✅ SESUDAH</div>
                         <img
-                          src={g.foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + g.foto_url : g.foto_url}
+                          src={afterPhotos[0].foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + afterPhotos[0].foto_url : afterPhotos[0].foto_url}
                           alt="Sesudah"
-                          className="w-full h-32 object-cover"
+                          className="w-full rounded-xl object-cover h-48 bg-slate-100"
                           onError={e => { e.target.style.display='none'; }}
                         />
-                        <span className="absolute bottom-1 left-1 px-2 py-0.5 rounded text-xs font-bold text-white bg-green-500">✅ Sesudah</span>
                       </div>
-                    ))}
+                    ) : (
+                      <div className="relative">
+                        <div className="absolute top-2 left-2 z-10 px-2 py-1 rounded-lg text-xs font-bold text-white bg-slate-400 shadow">⏳ SESUDAH</div>
+                        <div className="w-full rounded-xl h-48 bg-slate-50 flex flex-col items-center justify-center border-2 border-dashed border-slate-200">
+                          <p className="text-sm text-slate-400 font-medium">Belum ada foto</p>
+                          <p className="text-xs text-slate-300 mt-1">Menunggu penanganan petugas</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
+                  {/* Additional after photos */}
+                  {afterPhotos.length > 1 && (
+                    <div>
+                      <p className="text-xs text-slate-400 mb-2">Foto penanganan lainnya:</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {afterPhotos.slice(1).map(g => (
+                          <div key={g.id} className="relative rounded-lg overflow-hidden bg-slate-100">
+                            <img
+                              src={g.foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + g.foto_url : g.foto_url}
+                              alt="Sesudah"
+                              className="w-full h-24 object-cover"
+                              onError={e => { e.target.style.display='none'; }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* No after photo yet */}
-              {selectedGallery.filter(g => g.photo_type === 'after').length === 0 && (
+              {/* No photos at all */}
+              {!hasBefore && afterPhotos.length === 0 && (
                 <div className="bg-slate-50 rounded-xl p-4 text-center">
-                  <p className="text-sm text-slate-400">Belum ada foto penanganan</p>
-                  <p className="text-xs text-slate-300 mt-1">Foto "Sesudah" akan muncul setelah petugas menangani laporan ini</p>
+                  <p className="text-sm text-slate-400">Tidak ada foto tersedia</p>
                 </div>
               )}
 
               {/* Info grid */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Status</p><p className={`font-bold ${selectedItem.status === 'Menunggu' ? 'text-amber-600' : selectedItem.status === 'Diproses' ? 'text-blue-600' : 'text-green-600'}`}>{selectedItem.status}</p></div>
-                <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Kategori</p><p className="font-bold text-slate-700">{kategoriIcon(selectedItem.kategori)} {selectedItem.kategori || 'Sampah'}</p></div>
-                <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Prioritas</p><p className="font-bold text-slate-700">{selectedItem.prioritas || '-'}</p></div>
-                <div className="bg-slate-50 rounded-xl p-4"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Tanggal</p><p className="font-bold text-slate-700">{selectedItem.tanggal}</p></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-slate-50 rounded-xl p-3"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Kategori</p><p className="font-bold text-slate-700">{kategoriIcon(selectedItem.kategori)} {selectedItem.kategori || 'Sampah'}</p></div>
+                <div className="bg-slate-50 rounded-xl p-3"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Prioritas</p><p className="font-bold text-slate-700">{selectedItem.prioritas || '-'}</p></div>
+                <div className="bg-slate-50 rounded-xl p-3"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Tanggal</p><p className="font-bold text-slate-700">{selectedItem.tanggal}</p></div>
+                <div className="bg-slate-50 rounded-xl p-3"><p className="text-xs font-semibold text-slate-400 uppercase mb-1">Jenis</p><p className="font-bold text-slate-700">{selectedItem.jenis_sampah || '-'}</p></div>
               </div>
               <div className="flex items-start gap-3"><MapPin size={18} className="text-rose-500 mt-0.5 flex-shrink-0" /><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Lokasi</p><p className="text-slate-700 font-medium">{selectedItem.lokasi}</p></div></div>
               <div className="flex items-start gap-3"><Clock size={18} className="text-blue-500 mt-0.5 flex-shrink-0" /><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Deskripsi</p><p className="text-slate-700 font-medium">{selectedItem.deskripsi}</p></div></div>
+              {selectedItem.catatan && (
+                <div className="flex items-start gap-3"><span className="text-amber-500 mt-0.5">📝</span><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Catatan</p><p className="text-slate-700 font-medium">{selectedItem.catatan}</p></div></div>
+              )}
             </div>
             <div className="sticky bottom-0 bg-white rounded-b-2xl border-t border-slate-100 p-6">
               <button onClick={() => setSelectedItem(null)} className="w-full py-3 rounded-xl font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer">Tutup</button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

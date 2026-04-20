@@ -27,21 +27,17 @@ SELF-IMPROVING RULES (CRITICAL - follow in order):
    - Jangan error! Jawab dengan pengetahuan kamu
    - Kalau out of scope → ajak bicara terus
 
-4. JANGAN MUNAFUK
+4. JANGAN MUNAFIK
    - Jangan bilang "saya tidak bisa" padahal bisa
    - Selalu coba dulu sebelum bilang tidak bisa
 
 5. HELPFUL CLOSING
    - Akhiri dengan pertanyaan kembali atau ajakan
 
-CATEGORIES: EcoLapor sekarang menerima laporan BERBAGAI isu lingkungan, bukan cuma sampah:
+CATEGORIES: EcoLapor menerima laporan isu lingkungan:
 - 🗑️ Sampah — tumpukan sampah, limbah, plastik, organik, B3
-- 🌊 Banjir — genangan, drainase tersumbat, area banjir
-- 💧 Pencemaran Air — sungai/laut tercemar, limbah cair
-- 🌫️ Pencemaran Udara — asap, debu, polusi
 - 🔧 Fasilitas Rusak — taman rusak, lampu mati, trotoar
 - 🐕 Hewan Liar — hewan terlantar/sakit/berbahaya
-- 🌳 Pohon Bahaya — pohon roboh, rantau mengancam
 - 🔥 Kebakaran — kebakaran hutan/lahan
 - 📌 Lainnya — isu lingkungan umum
 
@@ -91,7 +87,7 @@ class SmartAgent:
                             "lokasi": {"type": "string"},
                             "deskripsi": {"type": "string"},
                             "user_id": {"type": "integer"},
-                            "kategori": {"type": "string", "enum": ["Sampah", "Banjir", "Pencemaran Air", "Pencemaran Udara", "Fasilitas Rusak", "Hewan Liar", "Pohon Bahaya", "Kebakaran", "Lainnya"], "description": "Kategori laporan lingkungan"}
+                            "kategori": {"type": "string", "enum": ["Sampah", "Fasilitas Rusak", "Hewan Liar", "Kebakaran", "Lainnya"], "description": "Kategori laporan lingkungan"}
                         },
                         "required": ["nama", "lokasi", "deskripsi", "user_id"]
                     }
