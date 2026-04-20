@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { MapPin, X, Clock, AlertTriangle, CheckCircle2, Camera, RefreshCw } from 'lucide-react';
+import { MapPin, X, RefreshCw, Layers, Flame, CircleDot } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 
 const API_BASE = '/api';
+const BASE_URL = window.location.origin;
 
 const KATEGORI_COLORS = {
   'Sampah': '#6b7280',
@@ -17,7 +20,6 @@ const KATEGORI_ICONS = {
 };
 
 function parseCoords(report) {
-  // Priority 1: latitude/longitude fields from DB (EXIF or browser GPS)
   if (report.latitude && report.longitude) {
     const lat = parseFloat(report.latitude);
     const lng = parseFloat(report.longitude);
@@ -25,7 +27,6 @@ function parseCoords(report) {
       return { lat, lng };
     }
   }
-  // Priority 2: parse from lokasi string ("1.4748, 124.8421")
   if (report.lokasi) {
     const parts = report.lokasi.split(',').map(s => parseFloat(s.trim()));
     if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && Math.abs(parts[0]) <= 90 && Math.abs(parts[1]) <= 180) {
@@ -35,7 +36,7 @@ function parseCoords(report) {
   return null;
 }
 
-const REFRESH_INTERVAL = 15000; // 15 seconds
+const REFRESH_INTERVAL = 15000;
 
 export function Peta() {
   const [reports, setReports] = useState([]);
@@ -45,13 +46,15 @@ export function Peta() {
   const [filterKategori, setFilterKategori] = useState('Semua');
   const [lastUpdated, setLastUpdated] = useState(null);
   const [newCount, setNewCount] = useState(0);
+  const [viewMode, setViewMode] = useState('markers'); // 'markers' | 'heatmap' | 'cluster'
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]);
+  const clusterRef = useRef(null);
+  const heatLayerRef = useRef(null);
   const LRef = useRef(null);
   const prevIdsRef = useRef(new Set());
 
-  // Fetch all reports
   const fetchAll = useCallback(async () => {
     let all = [];
     let p = 1;
@@ -63,7 +66,6 @@ export function Peta() {
       p++;
     }
 
-    // Detect new reports
     const currentIds = new Set(all.map(r => r.id));
     const newOnes = all.filter(r => !prevIdsRef.current.has(r.id));
     if (prevIdsRef.current.size > 0 && newOnes.length > 0) {
@@ -77,18 +79,20 @@ export function Peta() {
     setLoading(false);
   }, []);
 
-  // Initial fetch + polling
   useEffect(() => {
     fetchAll();
     const interval = setInterval(fetchAll, REFRESH_INTERVAL);
     return () => clearInterval(interval);
   }, [fetchAll]);
 
-  // Initialize map
   useEffect(() => {
     if (loading || !mapRef.current || mapInstanceRef.current) return;
 
-    import('leaflet').then(L => {
+    Promise.all([
+      import('leaflet'),
+      import('leaflet.markercluster'),
+      import('leaflet.heat')
+    ]).then(([L, markerCluster, leafletHeat]) => {
       delete L.Icon.Default.prototype._getIconUrl;
       L.Icon.Default.mergeOptions({
         iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -100,78 +104,155 @@ export function Peta() {
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap'
       }).addTo(map);
+      
       mapInstanceRef.current = map;
       LRef.current = L;
     });
   }, [loading]);
 
-  // Update markers when reports or filter change
+  // Update markers/clusters/heatmap when data or viewMode changes
   useEffect(() => {
     if (!mapInstanceRef.current || !LRef.current) return;
     const L = LRef.current;
+    const map = mapInstanceRef.current;
 
-    // Clear existing markers
+    // Clear existing layers
+    if (clusterRef.current) {
+      map.removeLayer(clusterRef.current);
+      clusterRef.current = null;
+    }
+    if (heatLayerRef.current) {
+      map.removeLayer(heatLayerRef.current);
+      heatLayerRef.current = null;
+    }
     markersRef.current.forEach(m => m.remove());
     markersRef.current = [];
 
     const filtered = filterKategori === 'Semua' ? reports : reports.filter(r => r.kategori === filterKategori);
     const withCoords = filtered.filter(r => parseCoords(r));
 
-    withCoords.forEach(r => {
-      const coords = parseCoords(r);
-      const color = KATEGORI_COLORS[r.kategori] || '#6b7280';
-
-      // Pulse effect for Menunggu status
-      const isUrgent = r.status === 'Menunggu' || r.prioritas === 'Tinggi';
-      const pulseHtml = isUrgent
-        ? `<div style="position:absolute;width:40px;height:40px;border-radius:50%;background:${color};opacity:0.3;animation:pulse 2s infinite;top:-6px;left:-6px;"></div>`
-        : '';
-
-      const icon = L.divIcon({
-        className: 'custom-marker',
-        html: `
-          <style>@keyframes pulse{0%{transform:scale(1);opacity:0.3}100%{transform:scale(2);opacity:0}}</style>
-          <div style="position:relative;display:flex;align-items:center;justify-content:center;">
-            ${pulseHtml}
-            <div style="background:${color};width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);font-size:15px;cursor:pointer;position:relative;z-index:1">${KATEGORI_ICONS[r.kategori] || '📌'}</div>
-          </div>`,
-        iconSize: [30, 30],
-        iconAnchor: [15, 15],
+    if (viewMode === 'heatmap') {
+      // Heatmap mode
+      const heatData = withCoords.map(r => {
+        const coords = parseCoords(r);
+        const intensity = r.prioritas === 'Tinggi' ? 1.0 : r.prioritas === 'Sedang' ? 0.7 : 0.4;
+        return [coords.lat, coords.lng, intensity];
+      });
+      
+      if (heatData.length > 0 && L.heatLayer) {
+        heatLayerRef.current = L.heatLayer(heatData, {
+          radius: 25,
+          blur: 15,
+          maxZoom: 17,
+          max: 1.0,
+          gradient: {0.4: 'blue', 0.6: 'cyan', 0.7: 'lime', 0.8: 'yellow', 1.0: 'red'}
+        }).addTo(map);
+      }
+    } else if (viewMode === 'cluster') {
+      // Marker cluster mode
+      const clusterGroup = L.markerClusterGroup({
+        chunkedLoading: true,
+        spiderfyOnMaxZoom: true,
+        showCoverageOnHover: true,
+        zoomToBoundsOnClick: true,
+        maxClusterRadius: 80,
+        iconCreateFunction: function(cluster) {
+          const count = cluster.getChildCount();
+          return L.divIcon({
+            html: `<div style="background:rgba(59,130,246,0.9);color:white;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:14px;border:3px solid white;box-shadow:0 4px 12px rgba(0,0,0,0.3);">${count}</div>`,
+            className: 'marker-cluster',
+            iconSize: L.point(40, 40)
+          });
+        }
       });
 
-      const marker = L.marker([coords.lat, coords.lng], { icon }).addTo(mapInstanceRef.current);
+      withCoords.forEach(r => {
+        const coords = parseCoords(r);
+        const color = KATEGORI_COLORS[r.kategori] || '#6b7280';
+        const isUrgent = r.status === 'Menunggu' || r.prioritas === 'Tinggi';
+        const pulseHtml = isUrgent
+          ? `<div style="position:absolute;width:40px;height:40px;border-radius:50%;background:${color};opacity:0.3;animation:pulse 2s infinite;top:-6px;left:-6px;"></div>`
+          : '';
 
-      // Popup with summary
-      const popupContent = `
-        <div style="min-width:200px;font-family:system-ui">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-            <span style="font-size:20px">${KATEGORI_ICONS[r.kategori] || '📌'}</span>
-            <strong style="font-size:14px">#${r.id} ${r.nama || ''}</strong>
-          </div>
-          <div style="display:flex;gap:4px;margin-bottom:6px">
-            <span style="padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;background:${r.status === 'Menunggu' ? '#fef3c7;color:#b45309' : r.status === 'Diproses' ? '#dbeafe;color:#1d4ed8' : '#dcfce7;color:#15803d'}">${r.status}</span>
-            <span style="padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;background:${r.prioritas === 'Tinggi' ? '#fecaca;color:#dc2626' : r.prioritas === 'Sedang' ? '#fef3c7;color:#b45309' : '#dcfce7;color:#15803d'}">${r.prioritas}</span>
-          </div>
-          <p style="font-size:12px;color:#64748b;margin:0 0 4px">${r.lokasi}</p>
-          <p style="font-size:12px;color:#475569;margin:0">${(r.deskripsi || '').substring(0, 80)}${(r.deskripsi || '').length > 80 ? '...' : ''}</p>
-          <p style="font-size:10px;color:#94a3b8;margin-top:4px">${r.tanggal || ''}</p>
-        </div>`;
+        const icon = L.divIcon({
+          className: 'custom-marker',
+          html: `
+            <style>@keyframes pulse{0%{transform:scale(1);opacity:0.3}100%{transform:scale(2);opacity:0}}</style>
+            <div style="position:relative;display:flex;align-items:center;justify-content:center;">
+              ${pulseHtml}
+              <div style="background:${color};width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);font-size:15px;cursor:pointer;position:relative;z-index:1">${KATEGORI_ICONS[r.kategori] || '📌'}</div>
+            </div>`,
+          iconSize: [30, 30],
+          iconAnchor: [15, 15],
+        });
 
-      marker.bindPopup(popupContent);
-      marker.on('click', () => {
-        // Also set selectedItem for full detail modal
-        setSelectedItem(r);
+        const marker = L.marker([coords.lat, coords.lng], { icon });
+        
+        const popupContent = `
+          <div style="min-width:200px;font-family:system-ui">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+              <span style="font-size:20px">${KATEGORI_ICONS[r.kategori] || '📌'}</span>
+              <strong style="font-size:14px">#${r.id} ${r.nama || ''}</strong>
+            </div>
+            <div style="display:flex;gap:4px;margin-bottom:6px">
+              <span style="padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;background:${r.status === 'Menunggu' ? '#fef3c7;color:#b45309' : r.status === 'Diproses' ? '#dbeafe;color:#1d4ed8' : '#dcfce7;color:#15803d'}">${r.status}</span>
+              <span style="padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;background:${r.prioritas === 'Tinggi' ? '#fecaca;color:#dc2626' : r.prioritas === 'Sedang' ? '#fef3c7;color:#b45309' : '#dcfce7;color:#15803d'}">${r.prioritas}</span>
+            </div>
+            <p style="font-size:12px;color:#64748b;margin:0 0 4px">${r.lokasi}</p>
+            <p style="font-size:12px;color:#475569;margin:0">${(r.deskripsi || '').substring(0, 80)}${(r.deskripsi || '').length > 80 ? '...' : ''}</p>
+            <p style="font-size:10px;color:#94a3b8;margin-top:4px">${r.tanggal || ''}</p>
+          </div>`;
+        marker.bindPopup(popupContent);
+        clusterGroup.addLayer(marker);
       });
-      markersRef.current.push(marker);
-    });
 
-    // Only fit bounds on first load (not every refresh)
-    if (withCoords.length > 0 && markersRef.current.length === withCoords.length) {
-      // Don't auto-fit on every poll — only if map hasn't been interacted with
+      map.addLayer(clusterGroup);
+      clusterRef.current = clusterGroup;
+    } else {
+      // Normal marker mode (default)
+      withCoords.forEach(r => {
+        const coords = parseCoords(r);
+        const color = KATEGORI_COLORS[r.kategori] || '#6b7280';
+        const isUrgent = r.status === 'Menunggu' || r.prioritas === 'Tinggi';
+        const pulseHtml = isUrgent
+          ? `<div style="position:absolute;width:40px;height:40px;border-radius:50%;background:${color};opacity:0.3;animation:pulse 2s infinite;top:-6px;left:-6px;"></div>`
+          : '';
+
+        const icon = L.divIcon({
+          className: 'custom-marker',
+          html: `
+            <style>@keyframes pulse{0%{transform:scale(1);opacity:0.3}100%{transform:scale(2);opacity:0}}</style>
+            <div style="position:relative;display:flex;align-items:center;justify-content:center;">
+              ${pulseHtml}
+              <div style="background:${color};width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);font-size:15px;cursor:pointer;position:relative;z-index:1">${KATEGORI_ICONS[r.kategori] || '📌'}</div>
+            </div>`,
+          iconSize: [30, 30],
+          iconAnchor: [15, 15],
+        });
+
+        const marker = L.marker([coords.lat, coords.lng], { icon }).addTo(map);
+
+        const popupContent = `
+          <div style="min-width:200px;font-family:system-ui">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+              <span style="font-size:20px">${KATEGORI_ICONS[r.kategori] || '📌'}</span>
+              <strong style="font-size:14px">#${r.id} ${r.nama || ''}</strong>
+            </div>
+            <div style="display:flex;gap:4px;margin-bottom:6px">
+              <span style="padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;background:${r.status === 'Menunggu' ? '#fef3c7;color:#b45309' : r.status === 'Diproses' ? '#dbeafe;color:#1d4ed8' : '#dcfce7;color:#15803d'}">${r.status}</span>
+              <span style="padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;background:${r.prioritas === 'Tinggi' ? '#fecaca;color:#dc2626' : r.prioritas === 'Sedang' ? '#fef3c7;color:#b45309' : '#dcfce7;color:#15803d'}">${r.prioritas}</span>
+            </div>
+            <p style="font-size:12px;color:#64748b;margin:0 0 4px">${r.lokasi}</p>
+            <p style="font-size:12px;color:#475569;margin:0">${(r.deskripsi || '').substring(0, 80)}${(r.deskripsi || '').length > 80 ? '...' : ''}</p>
+            <p style="font-size:10px;color:#94a3b8;margin-top:4px">${r.tanggal || ''}</p>
+          </div>`;
+        marker.bindPopup(popupContent);
+        marker.on('click', () => setSelectedItem(r));
+        markersRef.current.push(marker);
+      });
     }
-  }, [reports, filterKategori]);
+  }, [reports, filterKategori, viewMode]);
 
-  // Open detail with gallery
   const openDetail = async (item) => {
     setSelectedItem(item);
     setSelectedGallery([]);
@@ -192,7 +273,7 @@ export function Peta() {
   function resolveImgSrc(val) {
     if (!val) return null;
     if (val.startsWith('data:')) return val;
-    if (val.startsWith('/')) return 'https://eco-lapor.43.157.235.76.nip.io' + val;
+    if (val.startsWith('/')) return BASE_URL + val;
     return null;
   }
 
@@ -201,14 +282,42 @@ export function Peta() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 pt-8 pb-12">
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
           <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">🗺️ Peta Laporan</h2>
           <p className="text-slate-500 mt-2 font-medium">
             {reportsWithCoords.length} laporan dengan GPS • {reportsWithoutCoords.length} tanpa koordinat
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* View Mode Toggle */}
+          <div className="flex bg-white rounded-xl border border-slate-200 p-1 shadow-sm">
+            <button
+              onClick={() => setViewMode('markers')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 ${
+                viewMode === 'markers' ? 'bg-blue-100 text-blue-700' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <MapPin size={14} /> Marker
+            </button>
+            <button
+              onClick={() => setViewMode('cluster')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 ${
+                viewMode === 'cluster' ? 'bg-indigo-100 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <CircleDot size={14} /> Cluster
+            </button>
+            <button
+              onClick={() => setViewMode('heatmap')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 ${
+                viewMode === 'heatmap' ? 'bg-red-100 text-red-700' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <Flame size={14} /> Heatmap
+            </button>
+          </div>
+
           {newCount > 0 && (
             <span className="px-3 py-1.5 rounded-full text-xs font-bold bg-green-100 text-green-700 animate-pulse">
               🔔 {newCount} laporan baru!
@@ -221,14 +330,12 @@ export function Peta() {
         </div>
       </div>
 
-      {/* Realtime indicator */}
       <div className="flex items-center gap-2 text-xs text-slate-400">
         <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
         Real-time • Auto refresh setiap 15 detik
         {lastUpdated && <span className="ml-1">• Terakhir: {lastUpdated.toLocaleTimeString('id-ID')}</span>}
       </div>
 
-      {/* Filter */}
       <div className="flex flex-wrap gap-2">
         {['Semua', ...Object.keys(KATEGORI_COLORS)].map(k => (
           <button key={k} onClick={() => setFilterKategori(k)}
@@ -243,7 +350,6 @@ export function Peta() {
         ))}
       </div>
 
-      {/* Map */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden" style={{ height: '500px' }}>
         {loading ? (
           <div className="flex items-center justify-center h-full text-slate-400">
@@ -257,7 +363,6 @@ export function Peta() {
         )}
       </div>
 
-      {/* Legend */}
       <div className="flex flex-wrap gap-4 bg-white rounded-xl p-4 border border-slate-100">
         <span className="text-xs font-semibold text-slate-400 uppercase">Keterangan:</span>
         {Object.entries(KATEGORI_COLORS).map(([k, c]) => (
@@ -272,7 +377,6 @@ export function Peta() {
         </div>
       </div>
 
-      {/* List without coords */}
       {reportsWithoutCoords.length > 0 && filterKategori === 'Semua' && (
         <div className="space-y-3">
           <h3 className="text-lg font-bold text-slate-900">📋 Tanpa Koordinat ({reportsWithoutCoords.length})</h3>
@@ -296,12 +400,11 @@ export function Peta() {
         </div>
       )}
 
-      {/* Detail Modal with Before/After */}
       {selectedItem && (() => {
         const beforePhotos = selectedGallery.filter(g => g.photo_type === 'before');
         const afterPhotos = selectedGallery.filter(g => g.photo_type === 'after');
         const beforeGallerySrc = beforePhotos.length > 0
-          ? (beforePhotos[0].foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + beforePhotos[0].foto_url : beforePhotos[0].foto_url)
+          ? (beforePhotos[0].foto_url?.startsWith('/') ? BASE_URL + beforePhotos[0].foto_url : beforePhotos[0].foto_url)
           : null;
         const beforeBase64Src = resolveImgSrc(selectedItem.foto);
         const hasBefore = beforeGallerySrc || beforeBase64Src;
@@ -320,7 +423,6 @@ export function Peta() {
               <button onClick={() => setSelectedItem(null)} className="p-2 hover:bg-slate-100 rounded-full cursor-pointer"><X size={20} className="text-slate-500" /></button>
             </div>
             <div className="p-5 space-y-4">
-              {/* Before/After */}
               {hasBefore && (
                 <div className="space-y-2">
                   <p className="text-sm font-bold text-slate-700">📸 Sebelum & Sesudah</p>
@@ -338,7 +440,7 @@ export function Peta() {
                     {afterPhotos.length > 0 ? (
                       <div className="relative">
                         <div className="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded text-[10px] font-bold text-white bg-green-500">✅ SESUDAH</div>
-                        <img src={afterPhotos[0].foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + afterPhotos[0].foto_url : afterPhotos[0].foto_url}
+                        <img src={afterPhotos[0].foto_url?.startsWith('/') ? BASE_URL + afterPhotos[0].foto_url : afterPhotos[0].foto_url}
                           alt="Sesudah" className="w-full rounded-lg object-cover h-36 bg-slate-100" onError={e => { e.target.style.display='none'; }} />
                       </div>
                     ) : (
