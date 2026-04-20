@@ -93,7 +93,7 @@ function resolveImgSrc(val) {
   return null;
 }
 
-function Dashboard({ onBuatLaporan }) {
+function Dashboard({ onBuatLaporan, userRole }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState({ total: 0, by_status: {}, by_priority: {}, by_category: {} });
   const [recent, setRecent] = useState([]);
@@ -154,14 +154,18 @@ function Dashboard({ onBuatLaporan }) {
         setSelectedGallery(galleryData.photos || []);
       } catch {}
     }
-    // Fetch AI suggestion
-    try {
-      const sugRes = await fetch(`${API_BASE}/laporan/${item.id}/suggest`);
-      const sugData = await sugRes.json();
-      setAiSuggestion(sugData.saran || null);
-    } catch {
-      setAiSuggestion(null);
-    } finally {
+    // Fetch AI suggestion — only for admin/petugas
+    if (userRole === 'admin') {
+      try {
+        const sugRes = await fetch(`${API_BASE}/laporan/${item.id}/suggest`);
+        const sugData = await sugRes.json();
+        setAiSuggestion(sugData.saran || null);
+      } catch {
+        setAiSuggestion(null);
+      } finally {
+        setAiLoading(false);
+      }
+    } else {
       setAiLoading(false);
     }
   };
@@ -378,7 +382,7 @@ function Dashboard({ onBuatLaporan }) {
               {selectedItem.catatan && (
                 <div className="flex items-start gap-3"><span className="mt-0.5">📝</span><div><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Catatan</p><p className="text-slate-700 font-medium">{selectedItem.catatan}</p></div></div>
               )}
-              {/* AI Suggestion Section */}
+              {userRole === 'admin' && (
               <div className="rounded-xl p-4 bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-100">
                 <p className="text-sm font-bold text-indigo-800 mb-2">💡 Saran Penanganan AI</p>
                 {aiLoading ? (
@@ -389,6 +393,7 @@ function Dashboard({ onBuatLaporan }) {
                   <p className="text-sm text-indigo-400 italic">Saran tidak tersedia</p>
                 )}
               </div>
+              )}
               {/* Vote Section */}
               <div className="rounded-xl p-4 bg-slate-50 border border-slate-200">
                 <div className="flex items-center justify-between mb-3">
@@ -437,7 +442,7 @@ function App() {
       <Navbar role={userRole} onLogout={handleLogout} />
       <main className="px-4">
         <Routes>
-          <Route path="/" element={<Dashboard onBuatLaporan={() => navigate('/warga')} />} />
+          <Route path="/" element={<Dashboard userRole={userRole} onBuatLaporan={() => navigate('/warga')} />} />
           <Route path="/warga" element={<Warga />} />
           <Route path="/peta" element={<Peta />} />
           <Route path="/admin" element={userRole === 'admin' ? <Admin /> : <Navigate to="/login" />} />
