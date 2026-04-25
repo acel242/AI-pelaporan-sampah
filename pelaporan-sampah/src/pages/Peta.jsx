@@ -7,14 +7,11 @@ const BASE_URL = window.location.origin;
 
 const KATEGORI_COLORS = {
   'Sampah': '#6b7280',
-  'Fasilitas Rusak': '#f59e0b',
-  'Hewan Liar': '#8b5cf6',
-  'Kebakaran': '#ef4444',
-  'Lainnya': '#a855f7',
+  'Jalan Rusak': '#f59e0b',
 };
 
 const KATEGORI_ICONS = {
-  'Sampah': '🗑️', 'Fasilitas Rusak': '🔧', 'Hewan Liar': '🐕', 'Kebakaran': '🔥', 'Lainnya': '📌',
+  'Sampah': '🗑️', 'Jalan Rusak': '🔧',
 };
 
 function parseCoords(report) {

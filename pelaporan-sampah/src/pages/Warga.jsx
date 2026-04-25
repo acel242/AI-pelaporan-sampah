@@ -9,10 +9,7 @@ const API_BASE = '/api';
 
 const KATEGORI_LIST = [
   { value: 'Sampah', label: 'Sampah', icon: '🗑️' },
-  { value: 'Fasilitas Rusak', label: 'Fasilitas Rusak', icon: '🔧' },
-  { value: 'Hewan Liar', label: 'Hewan Liar', icon: '🐕' },
-  { value: 'Kebakaran', label: 'Kebakaran', icon: '🔥' },
-  { value: 'Lainnya', label: 'Lainnya', icon: '📌' },
+  { value: 'Jalan Rusak', label: 'Jalan Rusak', icon: '🔧' },
 ];
 
 function resolveImgSrc(val) {
