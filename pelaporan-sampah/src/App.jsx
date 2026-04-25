@@ -221,9 +221,9 @@ function Dashboard({ onBuatLaporan, userRole }) {
   return (
     <div className="max-w-5xl mx-auto space-y-10 pt-8 pb-12">
       <div className="text-center space-y-4">
-        <div className="inline-flex items-center gap-2 bg-green-100 text-green-700 px-4 py-2 rounded-full text-sm font-bold"><Leaf size={16} />EcoLapor Manado</div>
+        <div className="inline-flex items-center gap-2 bg-green-100 text-green-700 px-4 py-2 rounded-full text-sm font-bold"><Leaf size={16} />EcoLapor Wonosobo</div>
         <h1 className="text-4xl sm:text-5xl font-extrabold text-slate-900 tracking-tight">Laporkan Isu Lingkungan<br className="hidden sm:block" /> di Sekitar Anda</h1>
-        <p className="text-slate-500 text-lg max-w-xl mx-auto">Bantu kami menjaga Manado — sampah, banjir, pencemaran, dan isu lingkungan lainnya.</p>
+        <p className="text-slate-500 text-lg max-w-xl mx-auto">Bantu kami menjaga Wonosobo — sampah, banjir, pencemaran, dan isu lingkungan lainnya.</p>
         <div className="flex items-center justify-center gap-3 flex-wrap">
           <Button onClick={onBuatLaporan} className="py-4 px-8 text-base gap-2 shadow-lg"><Plus size={18} />Buat Laporan</Button>
           <Button variant="secondary" onClick={() => navigate('/peta')} className="py-4 px-8 text-base gap-2 border-slate-300"><Map size={18} />Lihat Peta</Button>

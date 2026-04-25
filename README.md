@@ -1,7 +1,7 @@
-# 🌿 EcoLapor Manado
+# 🌿 EcoLapor Wonosobo
 ### Sistem Pelaporan Isu Lingkungan Berbasis AI
 
-> Platform pelaporan lingkungan cerdas untuk Kota Manado — menggabungkan **AI Vision**, **Chatbot Telegram**, dan **Dashboard Web** dalam satu ekosistem terintegrasi.
+> Platform pelaporan lingkungan cerdas untuk Kota Wonosobo — menggabungkan **AI Vision**, **Chatbot Telegram**, dan **Dashboard Web** dalam satu ekosistem terintegrasi.
 
 ---
 
@@ -299,7 +299,7 @@ CREATE TABLE agent_corrections (
 
 ## 👥 Tim
 
-**EcoLapor Manado** — Sistem Pelaporan Isu Lingkungan Berbasis AI
+**EcoLapor Wonosobo** — Sistem Pelaporan Isu Lingkungan Berbasis AI
 
 🟢 Live at: **https://eco-lapor.43.157.235.76.nip.io**
 

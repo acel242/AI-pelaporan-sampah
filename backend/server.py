@@ -1327,7 +1327,7 @@ def _describe_image_groq(mime: str, image_base64: str):
 def extract_location_from_image(image_base64: str):
     """
     AI vision to detect location from photo using Groq (Deepseek doesn't support vision).
-    Returns a location string like "Jl. Sudirman, dekat Pasar Bajo, Manado" or None.
+    Returns a location string like "Jl. Sudirman, dekat Pasar Bajo, Wonosobo" or None.
     """
     if not image_base64:
         return None
@@ -1359,7 +1359,7 @@ def _extract_location_groq(mime: str, image_base64: str):
                     'messages': [{
                         'role': 'user',
                         'content': [
-                            {'type': 'text', 'text': 'Deteksi LOKASI di Manado dari foto. Return JSON: {"lokasi": "Jl. Sudirman, dekat Pasar Bajo, Manado"} atau {"lokasi": ""} jika tidak ada petunjuk. Prioritas: nama jalan + landmark, nama area, keterangan umum. Bahasa Indonesia.'},
+                            {'type': 'text', 'text': 'Deteksi LOKASI di Wonosobo dari foto. Return JSON: {"lokasi": "Jl. Sudirman, dekat Pasar Bajo, Wonosobo"} atau {"lokasi": ""} jika tidak ada petunjuk. Prioritas: nama jalan + landmark, nama area, keterangan umum. Bahasa Indonesia.'},
                             {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
                         ]
                     }],
@@ -1391,7 +1391,7 @@ def reverse_geocode(lat: float, lon: float) -> str:
             response = client.get(
                 "https://nominatim.openstreetmap.org/reverse",
                 params={"lat": lat, "lon": lon, "format": "json", "accept-language": "id"},
-                headers={"User-Agent": "EcoLapor-Manado/1.0"}
+                headers={"User-Agent": "EcoLapor-Wonosobo/1.0"}
             )
             if response.status_code == 200:
                 data = response.json()
