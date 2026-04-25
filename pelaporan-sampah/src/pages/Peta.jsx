@@ -493,7 +493,7 @@ export function Peta() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="sticky top-0 bg-white rounded-t-2xl border-b border-slate-100 p-5 flex items-center justify-between z-10">
               <div>
-                <h3 className="text-lg font-bold text-slate-900">#{selectedItem.id} ${selectedItem.nama}</h3>
+                <h3 className="text-lg font-bold text-slate-900">#{selectedItem.id} {selectedItem.nama}</h3>
                 <div className="flex gap-2 mt-1">
                   <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${statusBadge(selectedItem.status)}`}>{selectedItem.status}</span>
                   <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600">{KATEGORI_ICONS[selectedItem.kategori] || '📌'} {selectedItem.kategori}</span>
@@ -533,14 +533,14 @@ export function Peta() {
                   </div>
                 </div>
               )}
-              <div className="flex items-start gap-2 text-sm text-slate-600"><MapPin size={16} className="text-rose-500 mt-0.5 flex-shrink-0" />${selectedItem.lokasi}</div>
-              <p className="text-sm text-slate-600">${selectedItem.deskripsi}</p>
+              <div className="flex items-start gap-2 text-sm text-slate-600"><MapPin size={16} className="text-rose-500 mt-0.5 flex-shrink-0" />{selectedItem.lokasi}</div>
+              <p className="text-sm text-slate-600">{selectedItem.deskripsi}</p>
               <div className="flex items-center justify-between">
-                <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${selectedItem.prioritas === 'Tinggi' ? 'bg-red-100 text-red-700' : selectedItem.prioritas === 'Sedang' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>Prioritas ${selectedItem.prioritas}</span>
-                <span className="text-xs text-slate-400">${selectedItem.tanggal}</span>
+                <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${selectedItem.prioritas === 'Tinggi' ? 'bg-red-100 text-red-700' : selectedItem.prioritas === 'Sedang' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>Prioritas {selectedItem.prioritas}</span>
+                <span className="text-xs text-slate-400">{selectedItem.tanggal}</span>
               </div>
               {selectedItem.catatan && (
-                <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Catatan</p><p className="text-sm text-slate-700">${selectedItem.catatan}</p></div>
+                <div className="bg-slate-50 rounded-lg p-3"><p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">Catatan</p><p className="text-sm text-slate-700">{selectedItem.catatan}</p></div>
               )}
             </div>
             <div className="border-t border-slate-100 p-4">
