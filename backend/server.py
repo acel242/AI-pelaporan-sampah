@@ -21,7 +21,7 @@ app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='/static')
 CORS(app)
 
 DATABASE_PATH = os.path.join(os.path.dirname(__file__), "..", "bot", "pelaporan.db")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "REDACTED")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "REPLACE_WITH_ENV_VAR")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-ef3ac5f08407493e9a1ab937848d20d8")
 
 
