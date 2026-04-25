@@ -355,20 +355,8 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("❌ Gagal download foto. Coba lagi.")
         return
 
-    # Send base64 image to backend to update laporan.foto (replaces warga's original photo)
-    try:
-        import requests
-        resp = requests.post(
-            f"{os.getenv('BACKEND_URL', 'https://eco-lapor.43.157.235.76.nip.io')}/api/laporan/{report_id}/foto",
-            json={"foto": foto_data_uri},
-            timeout=15
-        )
-        if resp.status_code != 200:
-            logger.error(f"Backend foto update failed: {resp.status_code} {resp.text}")
-    except Exception as e:
-        logger.error(f"Failed to send foto to backend: {e}")
-
-    # Also store in foto_bukti table
+    # Store in foto_bukti table ONLY - do NOT overwrite warga's original photo
+    # The bukti photo is separate from the warga's submission photo
     from tools import upload_foto_tool
     result = await upload_foto_tool(report_id, file_id, user.id)
 

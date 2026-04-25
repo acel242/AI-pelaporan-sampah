@@ -63,8 +63,11 @@ REASONING:
 5. Respond with helpful closing question
 """
 
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-ef3ac5f08407493e9a1ab937848d20d8")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 ADMIN_USER_IDS = [int(x.strip()) for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip()]
 
@@ -72,8 +75,11 @@ ADMIN_USER_IDS = [int(x.strip()) for x in os.getenv("ADMIN_USER_IDS", "").split(
 
 class SmartAgent:
     def __init__(self):
-        self.base_url = GROQ_BASE_URL
-        self.model = GROQ_MODEL
+        self.deepseek_url = DEEPSEEK_BASE_URL
+        self.deepseek_model = DEEPSEEK_MODEL
+        self.deepseek_key = DEEPSEEK_API_KEY
+        self.groq_url = GROQ_BASE_URL
+        self.groq_model = GROQ_MODEL
         self.tools = [
             {
                 "type": "function",
@@ -255,24 +261,44 @@ class SmartAgent:
         return user_id in ADMIN_USER_IDS
 
     async def _call_llm(self, messages, tools=None):
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": self.model,
+        """Call LLM with Deepseek primary, Groq fallback."""
+        payload_base = {
             "messages": messages,
             "temperature": 0.7,
         }
         if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+            payload_base["tools"] = tools
+            payload_base["tool_choice"] = "auto"
+
+        # Try Deepseek first
+        try:
+            payload_deepseek = {"model": self.deepseek_model, **payload_base}
+            async with httpx.AsyncClient(timeout=90.0) as client:
+                response = await client.post(
+                    f"{self.deepseek_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.deepseek_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=payload_deepseek
+                )
+                if response.status_code == 200:
+                    return response.json()
+                logger.warning(f"Deepseek API error: {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.warning(f"Deepseek call failed: {e}, trying Groq")
+
+        # Fallback to Groq
+        payload_groq = {"model": self.groq_model, **payload_base}
         try:
             async with httpx.AsyncClient(timeout=90.0) as client:
                 response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers=headers,
-                    json=payload
+                    f"{self.groq_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {GROQ_API_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json=payload_groq
                 )
                 if response.status_code != 200:
                     logger.error(f"Groq API error: {response.status_code} - {response.text}")
@@ -281,7 +307,7 @@ class SmartAgent:
         except httpx.TimeoutException:
             raise Exception("Timeout - coba lagi")
         except Exception as e:
-            logger.error(f"LLM call failed: {e}")
+            logger.error(f"LLM call failed (both providers): {e}")
             raise
 
     async def _generate_response(self, tool_result: dict) -> str:

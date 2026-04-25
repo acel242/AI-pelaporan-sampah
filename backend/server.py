@@ -22,6 +22,53 @@ CORS(app)
 
 DATABASE_PATH = os.path.join(os.path.dirname(__file__), "..", "bot", "pelaporan.db")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "REDACTED")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-ef3ac5f08407493e9a1ab937848d20d8")
+
+
+def _call_deepseek_text(prompt: str, model: str = "deepseek-v4-pro", max_tokens: int = 10, temperature: float = 0) -> str | None:
+    """Call Deepseek for text-only tasks. Returns content or None on failure."""
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.post(
+                'https://api.deepseek.com/chat/completions',
+                headers={'Authorization': f'Bearer {DEEPSEEK_API_KEY}', 'Content-Type': 'application/json'},
+                json={
+                    'model': model,
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'max_tokens': max_tokens,
+                    'temperature': temperature
+                }
+            )
+            result = response.json()
+            if "choices" in result and len(result["choices"]) > 0:
+                return result["choices"][0]["message"]["content"].strip()
+            return None
+    except Exception as e:
+        print(f"[Deepseek Text] Error: {e}")
+        return None
+
+
+def _call_groq_text(prompt: str, model: str = "llama-3.1-8b-instant", max_tokens: int = 10, temperature: float = 0) -> str | None:
+    """Call Groq for text-only tasks. Returns content or None on failure."""
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": max_tokens,
+                    "temperature": temperature
+                }
+            )
+            result = response.json()
+            if "choices" in result and len(result["choices"]) > 0:
+                return result["choices"][0]["message"]["content"].strip()
+            return None
+    except Exception as e:
+        print(f"[Groq Text] Error: {e}")
+        return None
 
 
 def get_db():
@@ -55,9 +102,12 @@ def auto_escalate_old_reports(db, days=3):
 
 def validate_image_content(image_base64: str) -> tuple[bool, str]:
     """Use AI Vision to validate if image contains an environmental issue.
-    
-    Lenient: accepts any environmental issue. Rejects only clearly irrelevant
-    content like selfies, food, vehicles, landscapes.
+
+    Strict: Rejects photos that are clearly NOT environmental issues.
+    Accepts: sampah, banjir, pencemaran, fasilitas rusak, pohon bahaya,
+             hewan tlantar, kebakaran, drainase tersumbat, jalan rusak.
+    Rejects: selfie/foto orang, makanan/minuman, kendaraan/motor/mobil,
+             dokumen/KTP, pemandangan, produk commercial, hewan peliharaan.
     """
     if not image_base64:
         return True, "No image"
@@ -75,34 +125,61 @@ def validate_image_content(image_base64: str) -> tuple[bool, str]:
     else:
         mime = 'image/jpeg'
 
-    sumopod_key = os.getenv("SUMOPOD_API_KEY", "sk-CJSIoKjjsr-v0NlC7P3IhQ")
+    prompt_text = (
+        "Periksa foto ini dengan teliti. Klasifikasikan:\n\n"
+        "ACCEPT (foto masalah lingkungan):\n"
+        "- Sampah/tumpukan sampah dalam jumlah apapun\n"
+        "- Banjir/genangan air\n"
+        "- Pencemaran air/sungai\n"
+        "- Fasilitas umum rusak (lampu, trotoar, jalan)\n"
+        "- Pohon bahaya/tumbang\n"
+        "- Hewan tlantar/berbahaya\n"
+        "- Kebakaran/asap\n"
+        "- Drainase tersumbat\n\n"
+        "REJECT (BUKAN masalah lingkungan):\n"
+        "- Selfie/foto orang (wajah manusia mendominasi)\n"
+        "- Makanan/minuman\n"
+        "- Kendaraan bermotor (mobil, motor, bis)\n"
+        "- Dokumen/KTP/surat\n"
+        "- Pemandangan/landscape\n"
+        "- Produk commercial/advertising\n"
+        "- Hewan peliharaan (anjing, kucing, dll)\n"
+        "- Gambar kartun/screenshot\n\n"
+        "Jawaban HANYA satu kata: ACCEPT atau REJECT"
+    )
 
+    # Deepseek doesn't support vision, go straight to Groq
+    try:
+        return _validate_image_groq(image_base64, mime)
+    except Exception:
+        return True, "OK (vision check error, accepting)"
+
+
+def _validate_image_groq(image_base64: str, mime: str) -> tuple[bool, str]:
+    """Image validation using Groq vision."""
     try:
         import httpx
         with httpx.Client(timeout=60.0) as client:
             response = client.post(
-                'https://ai.sumopod.com/v1/chat/completions',
-                headers={'Authorization': f'Bearer {sumopod_key}', 'Content-Type': 'application/json'},
+                'https://api.groq.com/openai/v1/chat/completions',
+                headers={'Authorization': f'Bearer {GROQ_API_KEY}', 'Content-Type': 'application/json'},
                 json={
-                    'model': 'gpt-5.1',
+                    'model': 'llama-3.2-11b-vision-preview',
                     'messages': [{'role': 'user', 'content': [
-                        {'type': 'text', 'text': 'Periksa foto ini. Jawab VALID jika menunjukkan masalah lingkungan (sampah, banjir, pencemaran, fasilitas rusak, pohon bahaya, hewan terlantar, kebakaran). Jawab TIDAK_VALID jika BUKAN masalah lingkungan (selfie, makanan, dokumen). Jawaban satu kata saja.'},
+                        {'type': 'text', 'text': 'Periksa foto ini. ACCEPT = masalah lingkungan (sampah, banjir, fasilitas rusak, dll). REJECT = BUKAN masalah lingkungan (selfie, makanan, kendaraan, dokumen, pemandangan, hewan peliharaan). Jawaban hanya satu kata: ACCEPT atau REJECT'},
                         {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
                     ]}],
-                    'max_tokens': 20,
-                    'temperature': 0.1
+                    'max_tokens': 10,
+                    'temperature': 0
                 }
             )
-
         result = response.json()
-        if "choices" not in result:
-            return True, "OK (vision check skipped)"
-        answer = result["choices"][0]["message"]["content"].strip().upper()
-        if "TIDAK_VALID" in answer or "INVALID" in answer:
-            return False, "Foto tidak menunjukkan masalah lingkungan. Mohon upload foto yang relevan."
+        answer = result.get("choices", [{}])[0].get("message", {}).get("content", "ACCEPT").strip().upper()
+        if "REJECT" in answer:
+            return False, "Foto tidak menunjukkan masalah lingkungan. Mohon upload foto yang menunjukkan masalah lingkungan (sampah, banjir, fasilitas rusak, dll)."
         return True, "OK"
     except Exception:
-        return True, "OK (vision check error)"
+        return True, "OK (Groq fallback failed)"
 
 
 def validate_description_content(nama: str, lokasi: str, deskripsi: str) -> tuple[bool, str]:
@@ -143,25 +220,26 @@ Kategori (pilih SATU):
 
 Jawaban hanya 1 kata: kategorinya."""
 
-    try:
-        with httpx.Client(timeout=15) as client:
-            response = client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "max_tokens": 10, "temperature": 0}
-            )
-            result = response.json()
-            answer = result.get("choices", [{}])[0].get("message", {}).get("content", "Sampah").strip()
+    mapping = {
+        "Sampah": "Sampah", "Fasilitas_Rusak": "Fasilitas Rusak",
+        "Hewan_Liar": "Hewan Liar", "Kebakaran": "Kebakaran", "Lainnya": "Lainnya"
+    }
 
-            mapping = {
-                "Sampah": "Sampah", "Fasilitas_Rusak": "Fasilitas Rusak",
-                "Hewan_Liar": "Hewan Liar", "Kebakaran": "Kebakaran", "Lainnya": "Lainnya"
-            }
-            kategori = mapping.get(answer, "Lainnya")
-            return kategori, classify_sub_category(nama, lokasi, deskripsi, kategori)
-    except Exception as e:
-        print(f"[AI Classify Category] Error: {e}")
-        return "Sampah", None
+    # Try Deepseek text model first (v4-pro)
+    # Try Deepseek first
+    answer = _call_deepseek_text(prompt)
+    if answer:
+        kategori = mapping.get(answer.strip(), "Lainnya")
+        return kategori, classify_sub_category(nama, lokasi, deskripsi, kategori)
+
+    # Fallback to Groq
+    answer = _call_groq_text(prompt)
+    if answer:
+        kategori = mapping.get(answer.strip(), "Lainnya")
+        return kategori, classify_sub_category(nama, lokasi, deskripsi, kategori)
+
+    print(f"[AI Classify Category] Both AI providers failed")
+    return "Sampah", None
 
 
 def classify_sub_category(nama: str, lokasi: str, deskripsi: str, kategori: str) -> str:
@@ -184,18 +262,17 @@ Pilihan: {options}
 
 Jawaban hanya 1 kata."""
 
-    try:
-        with httpx.Client(timeout=15) as client:
-            response = client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "max_tokens": 10, "temperature": 0}
-            )
-            result = response.json()
-            answer = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-            return answer if answer else None
-    except Exception:
-        return None
+    # Try Deepseek first
+    answer = _call_deepseek_text(prompt)
+    if answer:
+        return answer
+
+    # Fallback to Groq
+    answer = _call_groq_text(prompt)
+    if answer:
+        return answer
+
+    return None
 
 
 def classify_waste_type(nama: str, lokasi: str, deskripsi: str) -> str:
@@ -215,58 +292,45 @@ Jawaban hanya 1 kata: Anorganik, Organik, atau B3.
 
 Jika tidak yakin atau campuran, pilih yang paling dominan."""
 
-    try:
-        with httpx.Client(timeout=15) as client:
-            response = client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": "llama-3.1-8b-instant",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 10,
-                    "temperature": 0
-                }
-            )
-            result = response.json()
-            answer = result.get("choices", [{}])[0].get("message", {}).get("content", "Anorganik").strip()
+    def _parse_waste(answer: str) -> str:
+        if "Organik" in answer:
+            return "Organik"
+        elif "B3" in answer:
+            return "B3"
+        else:
+            return "Anorganik"
 
-            if "Organik" in answer:
-                return "Organik"
-            elif "B3" in answer:
-                return "B3"
-            else:
-                return "Anorganik"
+    # Try Deepseek first
+    answer = _call_deepseek_text(prompt)
+    if answer:
+        return _parse_waste(answer)
 
-    except Exception as e:
-        print(f"[AI Classify] Error: {e}")
-        return "Anorganik"
+    # Fallback to Groq
+    answer = _call_groq_text(prompt)
+    if answer:
+        return _parse_waste(answer)
+
+    print("[AI Classify] Both providers failed")
+    return "Anorganik"
 
 
 def suggest_solution(kategori: str, lokasi: str, deskripsi: str) -> str:
     """Use AI to suggest specific contacts/departments for handling a report."""
     prompt = f"""Berdasarkan laporan lingkungan berikut, berikan rekomendasi penanganan spesifik dalam bahasa Indonesia. Kategori: {kategori}. Lokasi: {lokasi}. Deskripsi: {deskripsi}. Jawab dengan format: 1) Siapa yang harus dihubungi (nama jabatan/instansi), 2) Langkah penanganan singkat, 3) Estimasi waktu penyelesaian. Jawaban maksimal 150 kata."""
 
-    try:
-        with httpx.Client(timeout=30) as client:
-            response = client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": "llama-3.1-8b-instant",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 300,
-                    "temperature": 0.3
-                }
-            )
-            result = response.json()
-            answer = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-            return answer if answer else "Saran tidak tersedia saat ini."
-    except Exception as e:
-        print(f"[AI Suggest] Error: {e}")
-        return "Saran tidak tersedia saat ini."
+    # Try Deepseek text model first (v4-pro)
+    # Try Deepseek first
+    answer = _call_deepseek_text(prompt, max_tokens=300, temperature=0.3)
+    if answer:
+        return answer
+
+    # Fallback to Groq
+    answer = _call_groq_text(prompt, model="llama-3.1-8b-instant", max_tokens=300, temperature=0.3)
+    if answer:
+        return answer
+
+    print("[AI Suggest] Both providers failed")
+    return "Saran tidak tersedia saat ini."
 
 
 
@@ -288,9 +352,6 @@ def assign_priority_ai(nama: str, lokasi: str, deskripsi: str, foto_base64: str 
                 mime = 'image/webp'
             else:
                 mime = 'image/jpeg'
-
-            sumopod_key = os.getenv("SUMOPOD_API_KEY", "sk-CJSIoKjjsr-v0NlC7P3IhQ")
-
             vision_prompt = f"""Anda adalah ahli analisis masalah lingkungan. Analisis foto ini SECARA DETAIL dan VISUAL untuk menentukan prioritas penanganan.
 
 KONTEKS TEKS:
@@ -314,31 +375,34 @@ PENTING: Jika foto menunjukkan sampah yang SEDIKIT (misal hanya 1 bungkus plasti
 
 Jawab hanya 1 kata: Rendah, Sedang, atau Tinggi."""
 
-            with httpx.Client(timeout=60.0) as client:
-                response = client.post(
-                    'https://ai.sumopod.com/v1/chat/completions',
-                    headers={'Authorization': f'Bearer {sumopod_key}', 'Content-Type': 'application/json'},
-                    json={
-                        'model': 'gpt-5.1',
-                        'messages': [{'role': 'user', 'content': [
-                            {'type': 'text', 'text': vision_prompt},
-                            {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{raw_b64}'}}
-                        ]}],
-                        'max_tokens': 10,
-                        'temperature': 0
-                    }
-                )
-                result = response.json()
-                answer = result.get("choices", [{}])[0].get("message", {}).get("content", "Sedang").strip()
-
-                if "Tinggi" in answer:
-                    return "Tinggi"
-                elif "Rendah" in answer:
-                    return "Rendah"
-                else:
-                    return "Sedang"
+            # Deepseek doesn't support vision, go straight to Groq
+            try:
+                with httpx.Client(timeout=60.0) as client:
+                    response = client.post(
+                        'https://api.groq.com/openai/v1/chat/completions',
+                        headers={'Authorization': f'Bearer {GROQ_API_KEY}', 'Content-Type': 'application/json'},
+                        json={
+                            'model': 'llama-3.2-11b-vision-preview',
+                            'messages': [{'role': 'user', 'content': [
+                                {'type': 'text', 'text': vision_prompt},
+                                {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{raw_b64}'}}
+                            ]}],
+                            'max_tokens': 10,
+                            'temperature': 0
+                        }
+                    )
+                    result = response.json()
+                    answer = result.get("choices", [{}])[0].get("message", {}).get("content", "Sedang").strip()
+                    if "Tinggi" in answer:
+                        return "Tinggi"
+                    elif "Rendah" in answer:
+                        return "Rendah"
+                    else:
+                        return "Sedang"
+            except Exception as e:
+                print(f"[AI Vision Priority] Groq failed: {e}, falling back to text-only")
         except Exception as e:
-            print(f"[AI Vision Priority] Error: {e}, falling back to text-only")
+            print(f"[AI Vision Priority] Unexpected error: {e}")
 
     # ── Step 2: Fallback — text-only reasoning (if no photo) ──
     prompt = f"""Analisis laporan lingkungan berikut dan tentukan prioritas respons:
@@ -1209,7 +1273,7 @@ def create_routes(app):
 
 def describe_image_ai(image_base64: str):
     """
-    Reusable AI image description helper using SumoPod GPT-5.1 with base64 data URIs.
+    Reusable AI image description helper using Deepseek + Groq fallback.
     Returns a waste description string, or None on failure / non-waste image.
     """
     if not image_base64:
@@ -1220,7 +1284,6 @@ def describe_image_ai(image_base64: str):
     except Exception:
         pass
 
-    # Detect MIME type from magic bytes
     if image_base64.startswith('iVBOR'):
         mime = 'image/png'
     elif image_base64.startswith('UklGR'):
@@ -1228,23 +1291,24 @@ def describe_image_ai(image_base64: str):
     else:
         mime = 'image/jpeg'
 
-    sumopod_key = os.getenv("SUMOPOD_API_KEY", "sk-CJSIoKjjsr-v0NlC7P3IhQ")
+    # Deepseek doesn't support vision, go straight to Groq
+    return _describe_image_groq(mime, image_base64)
 
+
+def _describe_image_groq(mime: str, image_base64: str):
+    """Describe using Groq vision."""
     try:
         import httpx
         with httpx.Client(timeout=60.0) as client:
             response = client.post(
-                'https://ai.sumopod.com/v1/chat/completions',
-                headers={
-                    'Authorization': f'Bearer {sumopod_key}',
-                    'Content-Type': 'application/json'
-                },
+                'https://api.groq.com/openai/v1/chat/completions',
+                headers={'Authorization': f'Bearer {GROQ_API_KEY}', 'Content-Type': 'application/json'},
                 json={
-                    'model': 'gpt-5.1',
+                    'model': 'llama-3.2-11b-vision-preview',
                     'messages': [{
                         'role': 'user',
                         'content': [
-                            {'type': 'text', 'text': 'Anda adalah asisten AI yang menganalisis foto masalah lingkungan di Indonesia. Jelaskan secara detail dan concis (2-3 kalimat) kondisi dalam foto dalam Bahasa Indonesia formal. Bisa berupa: sampah, banjir, pencemaran, fasilitas rusak, pohon bahaya, hewan terlantar, kebakaran. Contoh: Tumpukan sampah plastik di pinggir jalan, genangan air di drainase, pohon roboh menghalangi jalan. Jika foto BUKAN masalah lingkungan, jawab: FOTO_BUKAN_MASALAH'},
+                            {'type': 'text', 'text': 'Jelaskan foto masalah lingkungan di Indonesia dalam 2-3 kalimat Bahasa Indonesia. Accept: sampah, banjir, pencemaran, fasilitas rusak, pohon bahaya, hewan tlantar, kebakaran. Contoh: "Tumpukan sampah plastik di pinggir jalan". Jika BUKAN masalah lingkungan: FOTO_BUKAN_MASALAH'},
                             {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
                         ]
                     }],
@@ -1252,21 +1316,17 @@ def describe_image_ai(image_base64: str):
                     'temperature': 0.3
                 }
             )
-
         result = response.json()
-        if "choices" not in result:
+        desc = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        if "BUKAN_MASALAH" in desc.upper() or "bukan masalah" in desc.lower():
             return None
-        desc = result["choices"][0]["message"]["content"].strip()
-        if "BUKAN_MASALAH" in desc.upper() or "bukan masalah" in desc.lower() or "BUKAN_SAMPAH" in desc.upper() or "bukan sampah" in desc.lower():
-            return None
-        return desc
+        return desc if desc else None
     except Exception:
         return None
 
-
 def extract_location_from_image(image_base64: str):
     """
-    AI vision to detect location from photo (road name, landmark, area description).
+    AI vision to detect location from photo using Groq (Deepseek doesn't support vision).
     Returns a location string like "Jl. Sudirman, dekat Pasar Bajo, Manado" or None.
     """
     if not image_base64:
@@ -1283,24 +1343,23 @@ def extract_location_from_image(image_base64: str):
         mime = 'image/webp'
     else:
         mime = 'image/jpeg'
+    return _extract_location_groq(mime, image_base64)
 
-    sumopod_key = os.getenv("SUMOPOD_API_KEY", "sk-CJSIoKjjsr-v0NlC7P3IhQ")
 
+def _extract_location_groq(mime: str, image_base64: str):
+    """Fallback location extraction using Groq."""
     try:
         import httpx
         with httpx.Client(timeout=60.0) as client:
             response = client.post(
-                'https://ai.sumopod.com/v1/chat/completions',
-                headers={
-                    'Authorization': f'Bearer {sumopod_key}',
-                    'Content-Type': 'application/json'
-                },
+                'https://api.groq.com/openai/v1/chat/completions',
+                headers={'Authorization': f'Bearer {GROQ_API_KEY}', 'Content-Type': 'application/json'},
                 json={
-                    'model': 'gpt-5.1',
+                    'model': 'llama-3.2-11b-vision-preview',
                     'messages': [{
                         'role': 'user',
                         'content': [
-                            {'type': 'text', 'text': 'Analisis foto untuk mendeteksi LOKASI geografis di Manado, Sulawesi Utara, Indonesia. Return JSON dengan key "lokasi" berisi deskripsi lokasi yang spesifik dan detail dalam Bahasa Indonesia. Prioritas: (1) nama jalan + landmark/nama tempat, (2) nama area/neighbourhood + bangunan terkenal, (3) keterangan area umum (ruangan kelas, pinggir jalan, pasar). Jika foto benar-benar tidak memiliki petunjuk lokasi sama sekali, return: {"lokasi": ""}. Contoh valid: {"lokasi": "Jl. Sudirman, dekat Pasar Bajo, Manado"}, {"lokasi": "Di dalam ruangan kelas sekolah"}, {"lokasi": "Di pinggir jalan Boulevard, Manado"}. Jangan gunakan koordinat GPS.'},
+                            {'type': 'text', 'text': 'Deteksi LOKASI di Manado dari foto. Return JSON: {"lokasi": "Jl. Sudirman, dekat Pasar Bajo, Manado"} atau {"lokasi": ""} jika tidak ada petunjuk. Prioritas: nama jalan + landmark, nama area, keterangan umum. Bahasa Indonesia.'},
                             {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
                         ]
                     }],
@@ -1308,28 +1367,22 @@ def extract_location_from_image(image_base64: str):
                     'temperature': 0.3
                 }
             )
-
         result = response.json()
-        if "choices" not in result:
-            return None
-        raw = result["choices"][0]["message"]["content"].strip()
-        # Parse JSON response
+        raw = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
         import json
         try:
             data = json.loads(raw)
             lokasi = data.get("lokasi", "").strip()
             return lokasi if lokasi else None
         except Exception:
-            # Try to extract from text response
             if "lokasi" in raw.lower():
                 import re
                 match = re.search(r'"lokasi"\s*:\s*"([^"]+)"', raw)
                 if match:
                     return match.group(1).strip()
-            return None
+        return None
     except Exception:
         return None
-
 
 def reverse_geocode(lat: float, lon: float) -> str:
     """Reverse geocode coordinates to human-readable location using Nominatim (free)."""
@@ -1479,10 +1532,11 @@ Jawaban hanya 1 kata: Tinggi, Sedang, atau Rendah."""
 
 
 @app.route("/api/agent/describe", methods=["POST"])
+@app.route("/api/agent/describe", methods=["POST"])
 def agent_describe():
     """
     AI auto-description: analyze photo and generate waste description.
-    Uses SumoPod GPT-5.1 with base64 data URIs.
+    Uses Deepseek + Groq fallback.
     """
     body = request.get_json()
     image_base64 = body.get("image", "")
@@ -1496,7 +1550,6 @@ def agent_describe():
     except Exception:
         pass
 
-    # Detect MIME type from magic bytes
     if image_base64.startswith('iVBOR'):
         mime = 'image/png'
     elif image_base64.startswith('UklGR'):
@@ -1504,23 +1557,19 @@ def agent_describe():
     else:
         mime = 'image/jpeg'
 
-    sumopod_key = os.getenv("SUMOPOD_API_KEY", "sk-CJSIoKjjsr-v0NlC7P3IhQ")
-
+    # Deepseek doesn't support vision, go straight to Groq
     try:
         import httpx
         with httpx.Client(timeout=60.0) as client:
             response = client.post(
-                'https://ai.sumopod.com/v1/chat/completions',
-                headers={
-                    'Authorization': f'Bearer {sumopod_key}',
-                    'Content-Type': 'application/json'
-                },
+                'https://api.groq.com/openai/v1/chat/completions',
+                headers={'Authorization': f'Bearer {GROQ_API_KEY}', 'Content-Type': 'application/json'},
                 json={
-                    'model': 'gpt-5.1',
+                    'model': 'llama-3.2-11b-vision-preview',
                     'messages': [{
                         'role': 'user',
                         'content': [
-                            {'type': 'text', 'text': 'Anda adalah asisten AI yang menganalisis foto masalah lingkungan di Indonesia. Jelaskan secara detail dan concis (2-3 kalimat) kondisi dalam foto tersebut dalam Bahasa Indonesia formal. Ini bisa berupa: sampah, banjir, pencemaran, fasilitas rusak, pohon bahaya, hewan terlantar, kebakaran, atau masalah lingkungan lainnya. Jika foto BUKAN masalah lingkungan (misalnya selfie, makanan, kendaraan), jawab: FOTO_BUKAN_MASALAH'},
+                            {'type': 'text', 'text': 'Jelaskan foto masalah lingkungan di Indonesia dalam 2-3 kalimat Bahasa Indonesia formal. Accept: sampah, banjir, pencemaran, fasilitas rusak, pohon bahaya, hewan tlantar, kebakaran. Jika BUKAN masalah lingkungan: FOTO_BUKAN_MASALAH'},
                             {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
                         ]
                     }],
@@ -1528,31 +1577,16 @@ def agent_describe():
                     'temperature': 0.3
                 }
             )
-
         result = response.json()
         if "choices" not in result:
             return jsonify({"success": False, "error": result.get("error", {}).get("message", "AI error")}), 500
-
         description = result["choices"][0]["message"]["content"].strip()
-
-        if "BUKAN_MASALAH" in description.upper() or "bukan masalah" in description.lower() or "BUKAN_SAMPAH" in description.upper() or "bukan sampah" in description.lower():
+        if "BUKAN_MASALAH" in description.upper() or "bukan masalah" in description.lower():
             return jsonify({"success": False, "error": "Foto bukan masalah lingkungan"}), 400
-
         return jsonify({"success": True, "description": description})
+    except Exception as e2:
+        return jsonify({"success": False, "error": str(e2)}), 500
 
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-# ─────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────
-
-if __name__ == "__main__":
-    app.teardown_appcontext(close_db)
-
-    # ── Global error handlers: always return JSON ──
-    @app.errorhandler(Exception)
     def handle_exception(e):
         return jsonify({"error": str(e)}), getattr(e, 'code', 500)
 

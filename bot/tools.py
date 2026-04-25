@@ -1,5 +1,7 @@
 from database import (
     submit_report as db_submit_report,
+    submit_report_with_photos as db_submit_with_photos,
+    check_duplicate_report,
     get_reports,
     get_all_reports,
     update_report_status,
@@ -26,13 +28,39 @@ async def submit_report_tool(
     lokasi: str,
     deskripsi: str,
     user_id: int,
-    kategori: str = "Sampah"
+    kategori: str = "Sampah",
+    foto_urls: list = None
 ) -> dict:
     """
     Submit a new environmental report.
     Use this when user wants to report any environmental issue.
+    Checks for duplicates within 24h at same location.
     """
-    result = await db_submit_report(user_id, nama, lokasi, deskripsi, kategori=kategori)
+    # Check duplicate first
+    duplicate = await check_duplicate_report(user_id, lokasi)
+    if duplicate:
+        return {
+            "success": True,
+            "message": (
+                f"⚠️ Anda sudah melaporkan lokasi ini sebelumnya!\n\n"
+                f"📋 ID Laporan: #{duplicate['id']}\n"
+                f"📍 Lokasi: {duplicate['lokasi']}\n"
+                f"📝 Status: {duplicate['status']}\n"
+                f"🕐 Dilaporkan: {duplicate.get('tanggal', '-')}\n\n"
+                f"Tim kami sudah mencatat laporan ini. "
+                f"Jika ada info tambahan, silakan update laporan #{duplicate['id']}."
+            ),
+            "data": duplicate
+        }
+
+    if foto_urls:
+        result = await db_submit_with_photos(
+            user_id, nama, lokasi, deskripsi,
+            foto_urls=foto_urls, kategori=kategori
+        )
+    else:
+        result = await db_submit_report(user_id, nama, lokasi, deskripsi, kategori=kategori)
+
     return {
         "success": True,
         "message": (

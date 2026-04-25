@@ -55,18 +55,8 @@ async def init_db():
             )
         """)
         
-        # Migration: add columns if they don't exist
-        for col, default in [
-            ("prioritas", "Sedang"),
-            ("catatan", None),
-            ("updated_at", None),
-            ("foto", None),
-            ("jenis_sampah", "Anorganik"),
-            ("kategori", "Sampah"),
-            ("sub_kategori", None),
-            ("latitude", None),
-            ("longitude", None),
-        ]:
+        # Migration: add columns if they don't exist (newer columns not in CREATE TABLE)
+        for col in ["foto", "jenis_sampah", "kategori", "sub_kategori", "latitude", "longitude"]:
             try:
                 await db.execute(f"ALTER TABLE laporan ADD COLUMN {col} TEXT")
             except aiosqlite.OperationalError:
@@ -158,6 +148,80 @@ async def create_user(user_id: int, username: str, role: str = "warga"):
             (user_id, username, role, datetime.now().isoformat())
         )
         await db.commit()
+
+async def check_duplicate_report(user_id: int, lokasi: str, jam_window: int = 24) -> Optional[dict]:
+    """Check if user has submitted a similar report at the same location in the last N hours.
+    Returns the existing report if found, None otherwise."""
+    from datetime import timedelta
+    cutoff = (datetime.now() - timedelta(hours=jam_window)).isoformat()
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM laporan
+               WHERE user_id = ?
+                 AND LOWER(lokasi) = LOWER(?)
+                 AND created_at > ?
+               ORDER BY created_at DESC
+               LIMIT 1""",
+            (user_id, lokasi, cutoff)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+
+async def submit_report_with_photos(
+    user_id: int, nama: str, lokasi: str, deskripsi: str,
+    foto_urls: list[str] = None,
+    kategori: str = "Sampah", sub_kategori: str = None,
+    latitude: str = None, longitude: str = None,
+    jenis_sampah: str = "Anorganik"
+) -> dict:
+    """Submit a report and optionally attach photos, all in one transaction."""
+    from datetime import datetime
+
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        now = datetime.now()
+        tanggal = now.strftime("%d/%m/%Y")
+        created_at = now.isoformat()
+
+        cursor = await db.execute(
+            """INSERT INTO laporan (
+                   user_id, nama, lokasi, deskripsi, status, prioritas,
+                   tanggal, created_at, kategori, sub_kategori,
+                   latitude, longitude, jenis_sampah
+               ) VALUES (?, ?, ?, ?, 'Menunggu', 'Sedang', ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, nama, lokasi, deskripsi, tanggal, created_at,
+             kategori, sub_kategori, latitude, longitude, jenis_sampah)
+        )
+        laporan_id = cursor.lastrowid
+
+        if foto_urls:
+            for foto_url in foto_urls:
+                await db.execute(
+                    """INSERT INTO foto_bukti (laporan_id, foto_url, uploaded_at)
+                       VALUES (?, ?, ?)""",
+                    (laporan_id, foto_url, now.isoformat())
+                )
+
+        await db.commit()
+
+        return {
+            "id": laporan_id,
+            "nama": nama,
+            "lokasi": lokasi,
+            "deskripsi": deskripsi,
+            "status": "Menunggu",
+            "prioritas": "Sedang",
+            "tanggal": tanggal,
+            "kategori": kategori,
+            "sub_kategori": sub_kategori,
+            "latitude": latitude,
+            "longitude": longitude,
+            "jenis_sampah": jenis_sampah,
+            "foto_count": len(foto_urls) if foto_urls else 0,
+        }
+
 
 async def get_all_users() -> list[dict]:
     async with aiosqlite.connect(DATABASE_PATH) as db:
