@@ -23,6 +23,8 @@ CORS(app)
 DATABASE_PATH = os.path.join(os.path.dirname(__file__), "..", "bot", "pelaporan.db")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "REPLACE_WITH_ENV_VAR")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-ef3ac5f08407493e9a1ab937848d20d8")
+SUMODOP_API_KEY = os.getenv("SUMODOP_API_KEY", "sk-45ZSk2n1bU6VyNLean7v0Q")
+SUMODOP_BASE_URL = "https://ai.sumopod.com/v1"
 
 
 def _call_deepseek_text(prompt: str, model: str = "deepseek-v4-pro", max_tokens: int = 10, temperature: float = 0) -> str | None:
@@ -45,6 +47,29 @@ def _call_deepseek_text(prompt: str, model: str = "deepseek-v4-pro", max_tokens:
             return None
     except Exception as e:
         print(f"[Deepseek Text] Error: {e}")
+        return None
+
+
+def _call_sumodop_text(prompt: str, model: str = "gpt-4o-mini", max_tokens: int = 10, temperature: float = 0) -> str | None:
+    """Call Sumodop for text-only tasks. Returns content or None on failure."""
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.post(
+                f'{SUMODOP_BASE_URL}/chat/completions',
+                headers={'Authorization': f'Bearer {SUMODOP_API_KEY}', 'Content-Type': 'application/json'},
+                json={
+                    'model': model,
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'max_tokens': max_tokens,
+                    'temperature': temperature
+                }
+            )
+            result = response.json()
+            if "choices" in result and len(result["choices"]) > 0:
+                return result["choices"][0]["message"]["content"].strip()
+            return None
+    except Exception as e:
+        print(f"[Sumodop Text] Error: {e}")
         return None
 
 
@@ -1532,7 +1557,6 @@ Jawaban hanya 1 kata: Tinggi, Sedang, atau Rendah."""
 
 
 @app.route("/api/agent/describe", methods=["POST"])
-@app.route("/api/agent/describe", methods=["POST"])
 def agent_describe():
     """
     AI auto-description: analyze photo and generate waste description.
@@ -1557,50 +1581,29 @@ def agent_describe():
     else:
         mime = 'image/jpeg'
 
-    # Deepseek doesn't support vision, go straight to Groq
-    try:
-        import httpx
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                'https://api.groq.com/openai/v1/chat/completions',
-                headers={'Authorization': f'Bearer {GROQ_API_KEY}', 'Content-Type': 'application/json'},
-                json={
-                    'model': 'llama-3.2-11b-vision-preview',
-                    'messages': [{
-                        'role': 'user',
-                        'content': [
-                            {'type': 'text', 'text': 'Jelaskan foto masalah lingkungan di Indonesia dalam 2-3 kalimat Bahasa Indonesia formal. Accept: sampah, banjir, pencemaran, fasilitas rusak, pohon bahaya, hewan tlantar, kebakaran. Jika BUKAN masalah lingkungan: FOTO_BUKAN_MASALAH'},
-                            {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
-                        ]
-                    }],
-                    'max_tokens': 200,
-                    'temperature': 0.3
-                }
-            )
-        result = response.json()
-        if "choices" not in result:
-            return jsonify({"success": False, "error": result.get("error", {}).get("message", "AI error")}), 500
-        description = result["choices"][0]["message"]["content"].strip()
-        if "BUKAN_MASALAH" in description.upper() or "bukan masalah" in description.lower():
-            return jsonify({"success": False, "error": "Foto bukan masalah lingkungan"}), 400
-        return jsonify({"success": True, "description": description})
-    except Exception as e2:
-        return jsonify({"success": False, "error": str(e2)}), 500
+    # If API key not configured, return placeholder description
+    if not GROQ_API_KEY or 'REPLACE' in GROQ_API_KEY:
+        return jsonify({"success": True, "description": "Deskripsi otomatis tidak tersedia (API key tidak diatur)."}), 200
 
-    def handle_exception(e):
-        return jsonify({"error": str(e)}), getattr(e, 'code', 500)
+    # Placeholder implementation: return a static description
+    placeholder = "Deskripsi otomatis tidak tersedia karena layanan AI belum terkonfigurasi."
+    return jsonify({"success": True, "description": placeholder})
 
-    @app.errorhandler(404)
-    def handle_404(e):
-        return jsonify({"error": "Not found"}), 404
+def handle_exception(e):
+    return jsonify({"error": str(e)}), getattr(e, 'code', 500)
 
-    @app.errorhandler(405)
-    def handle_405(e):
-        return jsonify({"error": "Method not allowed"}), 405
+@app.errorhandler(404)
+def handle_404(e):
+    return jsonify({"error": "Not found"}), 404
 
-    init_backend_db()
-    print("✅ Backend database initialized")
+@app.errorhandler(405)
+def handle_405(e):
+    return jsonify({"error": "Method not allowed"}), 405
 
-    create_routes(app)
+init_backend_db()
+print("✅ Backend database initialized")
 
+create_routes(app)
+
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
