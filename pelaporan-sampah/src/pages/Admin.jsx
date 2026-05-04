@@ -17,7 +17,7 @@ const KATEGORI_LIST = [
 function resolveImgSrc(val) {
   if (!val) return null;
   if (val.startsWith('data:')) return val;
-  if (val.startsWith('/')) return 'https://eco-lapor.43.157.235.76.nip.io' + val;
+  if (val.startsWith('/')) return window.location.origin + val;
   return null;
 }
 
@@ -152,7 +152,7 @@ function DetailModal({ item, onClose, onRefresh }) {
                 <div className="grid grid-cols-2 gap-3">
                   {gallery.map(g => (
                     <div key={g.id} className="relative rounded-xl overflow-hidden bg-slate-100">
-                      <img src={g.foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + g.foto_url : g.foto_url} alt={g.photo_type} className="w-full h-32 object-cover" onError={e => { e.target.style.display='none'; }} />
+                      <img src={g.foto_url?.startsWith('/') ? window.location.origin + g.foto_url : g.foto_url} alt={g.photo_type} className="w-full h-32 object-cover" onError={e => { e.target.style.display='none'; }} />
                       <span className={`absolute bottom-1 left-1 px-2 py-0.5 rounded text-xs font-bold text-white ${g.photo_type === 'before' ? 'bg-amber-500' : 'bg-green-500'}`}>{g.photo_type === 'before' ? '📷 Sebelum' : '✅ Sesudah'}</span>
                     </div>
                   ))}

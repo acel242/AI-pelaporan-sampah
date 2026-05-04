@@ -21,10 +21,10 @@ app = Flask(__name__, static_folder=STATIC_DIR, static_url_path='/static')
 CORS(app)
 
 DATABASE_PATH = os.path.join(os.path.dirname(__file__), "..", "bot", "pelaporan.db")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "REPLACE_WITH_ENV_VAR")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-ef3ac5f08407493e9a1ab937848d20d8")
-SUMODOP_API_KEY = os.getenv("SUMODOP_API_KEY", "sk-45ZSk2n1bU6VyNLean7v0Q")
-SUMODOP_BASE_URL = "https://ai.sumopod.com/v1"
+SUMOPOD_API_KEY = os.getenv("SUMOPOD_API_KEY", "sk-5EKXYeikwY0pQsvMuTPzUA")
+SUMOPOD_BASE_URL = "https://ai.sumopod.com/v1"
 
 
 def _call_deepseek_text(prompt: str, model: str = "deepseek-v4-pro", max_tokens: int = 10, temperature: float = 0) -> str | None:
@@ -55,8 +55,8 @@ def _call_sumodop_text(prompt: str, model: str = "gpt-4o-mini", max_tokens: int 
     try:
         with httpx.Client(timeout=15.0) as client:
             response = client.post(
-                f'{SUMODOP_BASE_URL}/chat/completions',
-                headers={'Authorization': f'Bearer {SUMODOP_API_KEY}', 'Content-Type': 'application/json'},
+                f'{SUMOPOD_BASE_URL}/chat/completions',
+                headers={'Authorization': f'Bearer {SUMOPOD_API_KEY}', 'Content-Type': 'application/json'},
                 json={
                     'model': model,
                     'messages': [{'role': 'user', 'content': prompt}],
@@ -191,7 +191,7 @@ def _validate_image_groq(image_base64: str, mime: str) -> tuple[bool, str]:
                 json={
                     'model': 'llama-3.2-11b-vision-preview',
                     'messages': [{'role': 'user', 'content': [
-                        {'type': 'text', 'text': 'Periksa foto ini. ACCEPT = masalah lingkungan (sampah, banjir, fasilitas rusak, dll). REJECT = BUKAN masalah lingkungan (selfie, makanan, kendaraan, dokumen, pemandangan, hewan peliharaan). Jawaban hanya satu kata: ACCEPT atau REJECT'},
+                        {'type': 'text', 'text': 'Jelaskan foto masalah lingkungan di Indonesia dalam 2-3 kalimat Bahasa Indonesia. Jika ada sampah, banjir, atau fasilitas rusak, deskripsikan secara spesifik. Jika tidak jelas masalahnya, jelaskan saja objek di foto. Bahasa Indonesia.'},
                         {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
                     ]}],
                     'max_tokens': 10,
@@ -250,8 +250,13 @@ Jawaban hanya 1 kata: kategorinya."""
         "Hewan_Liar": "Hewan Liar", "Kebakaran": "Kebakaran", "Lainnya": "Lainnya"
     }
 
-    # Try Deepseek text model first (v4-pro)
-    # Try Deepseek first
+    # Try SumoPod first (confirmed working)
+    answer = _call_sumodop_text(prompt)
+    if answer:
+        kategori = mapping.get(answer.strip(), "Lainnya")
+        return kategori, classify_sub_category(nama, lokasi, deskripsi, kategori)
+
+    # Fallback to Deepseek
     answer = _call_deepseek_text(prompt)
     if answer:
         kategori = mapping.get(answer.strip(), "Lainnya")
@@ -263,8 +268,11 @@ Jawaban hanya 1 kata: kategorinya."""
         kategori = mapping.get(answer.strip(), "Lainnya")
         return kategori, classify_sub_category(nama, lokasi, deskripsi, kategori)
 
-    print(f"[AI Classify Category] Both AI providers failed")
+    print(f"[AI Classify Category] All AI providers failed")
     return "Sampah", None
+
+
+
 
 
 def classify_sub_category(nama: str, lokasi: str, deskripsi: str, kategori: str) -> str:
@@ -287,8 +295,8 @@ Pilihan: {options}
 
 Jawaban hanya 1 kata."""
 
-    # Try Deepseek first
-    answer = _call_deepseek_text(prompt)
+    # Try SumoPod first
+    answer = _call_sumodop_text(prompt)
     if answer:
         return answer
 
@@ -343,18 +351,23 @@ def suggest_solution(kategori: str, lokasi: str, deskripsi: str) -> str:
     """Use AI to suggest specific contacts/departments for handling a report."""
     prompt = f"""Berdasarkan laporan lingkungan berikut, berikan rekomendasi penanganan spesifik dalam bahasa Indonesia. Kategori: {kategori}. Lokasi: {lokasi}. Deskripsi: {deskripsi}. Jawab dengan format: 1) Siapa yang harus dihubungi (nama jabatan/instansi), 2) Langkah penanganan singkat, 3) Estimasi waktu penyelesaian. Jawaban maksimal 150 kata."""
 
-    # Try Deepseek text model first (v4-pro)
+    # Try SumoPod first (confirmed working)
     # Try Deepseek first
-    answer = _call_deepseek_text(prompt, max_tokens=300, temperature=0.3)
+    answer = _call_sumodop_text(prompt, max_tokens=300, temperature=0.3)
     if answer:
         return answer
 
-    # Fallback to Groq
+    # Fallback to DeepSeek
     answer = _call_groq_text(prompt, model="llama-3.1-8b-instant", max_tokens=300, temperature=0.3)
     if answer:
         return answer
 
-    print("[AI Suggest] Both providers failed")
+    # Fallback to SumoPod
+    answer = _call_sumodop_text(prompt, max_tokens=300, temperature=0.3)
+    if answer:
+        return answer
+
+    print("[AI Suggest] All AI providers failed")
     return "Saran tidak tersedia saat ini."
 
 
@@ -400,7 +413,19 @@ PENTING: Jika foto menunjukkan sampah yang SEDIKIT (misal hanya 1 bungkus plasti
 
 Jawab hanya 1 kata: Rendah, Sedang, atau Tinggi."""
 
-            # Deepseek doesn't support vision, go straight to Groq
+            # Try Groq vision first
+            def _parse_priority(answer: str) -> str | None:
+                if not answer:
+                    return None
+                if "Tinggi" in answer:
+                    return "Tinggi"
+                elif "Rendah" in answer:
+                    return "Rendah"
+                elif "Sedang" in answer:
+                    return "Sedang"
+                return None
+
+            # Try Groq vision
             try:
                 with httpx.Client(timeout=60.0) as client:
                     response = client.post(
@@ -417,15 +442,36 @@ Jawab hanya 1 kata: Rendah, Sedang, atau Tinggi."""
                         }
                     )
                     result = response.json()
-                    answer = result.get("choices", [{}])[0].get("message", {}).get("content", "Sedang").strip()
-                    if "Tinggi" in answer:
-                        return "Tinggi"
-                    elif "Rendah" in answer:
-                        return "Rendah"
-                    else:
-                        return "Sedang"
+                    priority = _parse_priority(result.get("choices", [{}])[0].get("message", {}).get("content", ""))
+                    if priority:
+                        return priority
             except Exception as e:
-                print(f"[AI Vision Priority] Groq failed: {e}, falling back to text-only")
+                print(f"[AI Vision Priority] Groq failed: {e}")
+
+            # Fallback to SumoPod vision
+            try:
+                with httpx.Client(timeout=60.0) as client:
+                    response = client.post(
+                        f'{SUMOPOD_BASE_URL}/chat/completions',
+                        headers={'Authorization': f'Bearer {SUMOPOD_API_KEY}', 'Content-Type': 'application/json'},
+                        json={
+                            'model': 'gpt-4o-mini',
+                            'messages': [{'role': 'user', 'content': [
+                                {'type': 'text', 'text': vision_prompt},
+                                {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{raw_b64}'}}
+                            ]}],
+                            'max_tokens': 10,
+                            'temperature': 0
+                        }
+                    )
+                    result = response.json()
+                    priority = _parse_priority(result.get("choices", [{}])[0].get("message", {}).get("content", ""))
+                    if priority:
+                        return priority
+            except Exception as e:
+                print(f"[AI Vision Priority] SumoPod failed: {e}")
+
+            print(f"[AI Vision Priority] Both vision providers failed, falling back to text-only")
         except Exception as e:
             print(f"[AI Vision Priority] Unexpected error: {e}")
 
@@ -1296,9 +1342,10 @@ def create_routes(app):
             "recent_corrections": [dict(r) for r in recent]
         })
 
-def describe_image_ai(image_base64: str):
+def describe_image_ai(image_base64: str, category: str = None):
     """
-    Reusable AI image description helper using Deepseek + Groq fallback.
+    Reusable AI image description helper using Groq + Sumopod fallback.
+    Supports optional category to tailor the description.
     Returns a waste description string, or None on failure / non-waste image.
     """
     if not image_base64:
@@ -1316,8 +1363,33 @@ def describe_image_ai(image_base64: str):
     else:
         mime = 'image/jpeg'
 
-    # Deepseek doesn't support vision, go straight to Groq
-    return _describe_image_groq(mime, image_base64)
+    # If category provided, use Sumopod text endpoint with custom prompt
+    if category:
+        prompt = f"Deskripsikan isi gambar fokus pada {category} dalam 1-2 kalimat Bahasa Indonesia, tanpa menyebut kata 'gambar' atau 'foto'."
+        desc = _call_sumodop_text(prompt)
+        if desc:
+            print(f"[Describe AI] Sumopod (category) returned description: {desc[:80]}...")
+            return desc
+    # Otherwise, use vision fallback
+    print("[Describe AI] Calling Sumopod vision...")
+    desc = _describe_image_sumodop(mime, image_base64)
+    if desc:
+        print(f"[Describe AI] Sumopod vision returned description: {desc[:80]}...")
+        return desc
+
+    print("[Describe AI] Sumopod failed or returned empty. Falling back to Groq...")
+    # If category provided, use Groq text endpoint with custom prompt
+    if category:
+        groq_prompt = f"Deskripsikan isi foto fokus pada {category} dalam 1-2 kalimat Bahasa Indonesia, tanpa menyebut kata 'foto'."
+        desc_groq = _call_groq_text(groq_prompt)
+    else:
+        desc_groq = _describe_image_groq(mime, image_base64)
+    if desc_groq:
+        print("[Describe AI] Groq returned description.")
+        return desc_groq
+
+    print("[Describe AI] Both Sumopod and Groq failed to return a description.")
+    return None
 
 
 def _describe_image_groq(mime: str, image_base64: str):
@@ -1333,7 +1405,7 @@ def _describe_image_groq(mime: str, image_base64: str):
                     'messages': [{
                         'role': 'user',
                         'content': [
-                            {'type': 'text', 'text': 'Jelaskan foto masalah lingkungan di Indonesia dalam 2-3 kalimat Bahasa Indonesia. Accept: sampah, banjir, pencemaran, fasilitas rusak, pohon bahaya, hewan tlantar, kebakaran. Contoh: "Tumpukan sampah plastik di pinggir jalan". Jika BUKAN masalah lingkungan: FOTO_BUKAN_MASALAH'},
+                            {'type': 'text', 'text': 'Deskripsikan singkat isi foto (1-2 kalimat) dalam Bahasa Indonesia, fokus pada masalah lingkungan, tanpa menyebut kata "foto". Jika bukan masalah lingkungan, balas "BUKAN_MASALAH".'},
                             {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
                         ]
                     }],
@@ -1349,9 +1421,42 @@ def _describe_image_groq(mime: str, image_base64: str):
     except Exception:
         return None
 
+
+def _describe_image_sumodop(mime: str, image_base64: str):
+    """Describe image using SumoPod vision (gpt-4o-mini)."""
+    try:
+        import httpx
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                f'{SUMOPOD_BASE_URL}/chat/completions',
+                headers={'Authorization': f'Bearer {SUMOPOD_API_KEY}', 'Content-Type': 'application/json'},
+                json={
+                    'model': 'gpt-4o-mini',
+                    'messages': [{
+                        'role': 'user',
+                        'content': [
+                            {'type': 'text', 'text': 'Deskripsikan singkat isi gambar (1-2 kalimat) dalam Bahasa Indonesia, fokus pada masalah lingkungan, tanpa menyebut kata "gambar".'},
+                            {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
+                        ]
+                    }],
+                    'max_tokens': 200,
+                    'temperature': 0.3
+                }
+            )
+        result = response.json()
+        desc = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        if desc:
+            print(f"[SumoPod Vision] Got description: {desc[:80]}...")
+            return desc
+        return None
+    except Exception as e:
+        print(f"[SumoPod Vision] Error: {e}")
+        return None
+
+
 def extract_location_from_image(image_base64: str):
     """
-    AI vision to detect location from photo using Groq (Deepseek doesn't support vision).
+    AI vision to detect location from photo.
     Returns a location string like "Jl. Sudirman, dekat Pasar Bajo, Wonosobo" or None.
     """
     if not image_base64:
@@ -1368,7 +1473,11 @@ def extract_location_from_image(image_base64: str):
         mime = 'image/webp'
     else:
         mime = 'image/jpeg'
-    return _extract_location_groq(mime, image_base64)
+    # Try Groq first, then SumoPod
+    lokasi = _extract_location_groq(mime, image_base64)
+    if lokasi:
+        return lokasi
+    return _extract_location_sumodop(mime, image_base64)
 
 
 def _extract_location_groq(mime: str, image_base64: str):
@@ -1408,6 +1517,46 @@ def _extract_location_groq(mime: str, image_base64: str):
         return None
     except Exception:
         return None
+
+
+def _extract_location_sumodop(mime: str, image_base64: str):
+    """Extract location using SumoPod vision."""
+    try:
+        import httpx
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                f'{SUMOPOD_BASE_URL}/chat/completions',
+                headers={'Authorization': f'Bearer {SUMOPOD_API_KEY}', 'Content-Type': 'application/json'},
+                json={
+                    'model': 'gpt-4o-mini',
+                    'messages': [{
+                        'role': 'user',
+                        'content': [
+                            {'type': 'text', 'text': 'Deteksi LOKASI di Wonosobo dari foto. Return JSON: {"lokasi": "Jl. Sudirman, dekat Pasar Bajo, Wonosobo"} atau {"lokasi": ""} jika tidak ada petunjuk. Prioritas: nama jalan + landmark, nama area, keterangan umum. Bahasa Indonesia.'},
+                            {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,{image_base64}'}}
+                        ]
+                    }],
+                    'max_tokens': 80,
+                    'temperature': 0.3
+                }
+            )
+        result = response.json()
+        raw = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        import json
+        try:
+            data = json.loads(raw)
+            lokasi = data.get("lokasi", "").strip()
+            return lokasi if lokasi else None
+        except Exception:
+            if "lokasi" in raw.lower():
+                import re
+                match = re.search(r'"lokasi"\s*:\s*"([^"]+)"', raw)
+                if match:
+                    return match.group(1).strip()
+        return None
+    except Exception:
+        return None
+
 
 def reverse_geocode(lat: float, lon: float) -> str:
     """Reverse geocode coordinates to human-readable location using Nominatim (free)."""
@@ -1560,34 +1709,20 @@ Jawaban hanya 1 kata: Tinggi, Sedang, atau Rendah."""
 def agent_describe():
     """
     AI auto-description: analyze photo and generate waste description.
-    Uses Deepseek + Groq fallback.
+    Uses Groq + SumoPod vision fallback.
     """
     body = request.get_json()
     image_base64 = body.get("image", "")
+    category = body.get("category")  # optional category for tailored description
 
     if not image_base64:
         return jsonify({"success": False, "error": "No image provided"}), 400
 
-    try:
-        if "," in image_base64:
-            image_base64 = image_base64.split(",", 1)[1]
-    except Exception:
-        pass
+    description = describe_image_ai(image_base64, category)
+    if description:
+        return jsonify({"success": True, "description": description}), 200
 
-    if image_base64.startswith('iVBOR'):
-        mime = 'image/png'
-    elif image_base64.startswith('UklGR'):
-        mime = 'image/webp'
-    else:
-        mime = 'image/jpeg'
-
-    # If API key not configured, return placeholder description
-    if not GROQ_API_KEY or 'REPLACE' in GROQ_API_KEY:
-        return jsonify({"success": True, "description": "Deskripsi otomatis tidak tersedia (API key tidak diatur)."}), 200
-
-    # Placeholder implementation: return a static description
-    placeholder = "Deskripsi otomatis tidak tersedia karena layanan AI belum terkonfigurasi."
-    return jsonify({"success": True, "description": placeholder})
+    return jsonify({"success": True, "description": "Deskripsi otomatis tidak tersedia saat ini."}), 200
 
 def handle_exception(e):
     return jsonify({"error": str(e)}), getattr(e, 'code', 500)

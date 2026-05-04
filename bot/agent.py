@@ -63,11 +63,11 @@ REASONING:
 5. Respond with helpful closing question
 """
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-ef3ac5f08407493e9a1ab937848d20d8")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 ADMIN_USER_IDS = [int(x.strip()) for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip()]
 
@@ -75,9 +75,9 @@ ADMIN_USER_IDS = [int(x.strip()) for x in os.getenv("ADMIN_USER_IDS", "").split(
 
 class SmartAgent:
     def __init__(self):
-        self.deepseek_url = DEEPSEEK_BASE_URL
-        self.deepseek_model = DEEPSEEK_MODEL
-        self.deepseek_key = DEEPSEEK_API_KEY
+        self.openrouter_url = OPENROUTER_BASE_URL
+        self.openrouter_model = OPENROUTER_MODEL
+        self.openrouter_key = OPENROUTER_API_KEY
         self.groq_url = GROQ_BASE_URL
         self.groq_model = GROQ_MODEL
         self.tools = [
@@ -270,23 +270,23 @@ class SmartAgent:
             payload_base["tools"] = tools
             payload_base["tool_choice"] = "auto"
 
-        # Try Deepseek first
+        # Try Sumodop first
         try:
-            payload_deepseek = {"model": self.deepseek_model, **payload_base}
+            payload_sumodop = {"model": self.sumodop_model, **payload_base}
             async with httpx.AsyncClient(timeout=90.0) as client:
                 response = await client.post(
-                    f"{self.deepseek_url}/chat/completions",
+                    f"{self.sumodop_url}/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {self.deepseek_key}",
+                        "Authorization": f"Bearer {self.sumodop_key}",
                         "Content-Type": "application/json"
                     },
-                    json=payload_deepseek
+                    json=payload_sumodop
                 )
                 if response.status_code == 200:
                     return response.json()
-                logger.warning(f"Deepseek API error: {response.status_code} - {response.text}")
+                logger.warning(f"Sumodop API error: {response.status_code} - {response.text}")
         except Exception as e:
-            logger.warning(f"Deepseek call failed: {e}, trying Groq")
+            logger.warning(f"Sumodop call failed: {e}, trying Groq")
 
         # Fallback to Groq
         payload_groq = {"model": self.groq_model, **payload_base}

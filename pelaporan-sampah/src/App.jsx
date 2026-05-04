@@ -86,8 +86,8 @@ function Navbar({ role, onLogout }) {
 function resolveImgSrc(val) {
   if (!val) return null;
   if (val.startsWith('data:')) return val;
-  if (val.startsWith('/')) return 'https://eco-lapor.43.157.235.76.nip.io' + val;
-  return null;
+  if (val.startsWith('/')) return window.location.origin + val;
+  return val;
 }
 
 function Dashboard({ onBuatLaporan, userRole }) {
@@ -299,7 +299,7 @@ function Dashboard({ onBuatLaporan, userRole }) {
         const beforePhotos = selectedGallery.filter(g => g.photo_type === 'before');
         const afterPhotos = selectedGallery.filter(g => g.photo_type === 'after');
         const beforeGallerySrc = beforePhotos.length > 0
-          ? (beforePhotos[0].foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + beforePhotos[0].foto_url : beforePhotos[0].foto_url)
+          ? (beforePhotos[0].foto_url?.startsWith('/') ? window.location.origin + beforePhotos[0].foto_url : beforePhotos[0].foto_url)
           : null;
         const beforeBase64Src = resolveImgSrc(selectedItem.foto);
         const hasBefore = beforeGallerySrc || beforeBase64Src;
@@ -338,7 +338,7 @@ function Dashboard({ onBuatLaporan, userRole }) {
                       <div className="relative">
                         <div className="absolute top-2 left-2 z-10 px-2 py-1 rounded-lg text-xs font-bold text-white bg-green-500 shadow">✅ SESUDAH</div>
                         <img
-                          src={afterPhotos[0].foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + afterPhotos[0].foto_url : afterPhotos[0].foto_url}
+                          src={afterPhotos[0].foto_url?.startsWith('/') ? window.location.origin + afterPhotos[0].foto_url : afterPhotos[0].foto_url}
                           alt="Sesudah" className="w-full rounded-xl object-cover h-48 bg-slate-100" onError={e => { e.target.style.display='none'; }} />
                       </div>
                     ) : (
@@ -357,7 +357,7 @@ function Dashboard({ onBuatLaporan, userRole }) {
                       <div className="grid grid-cols-3 gap-2">
                         {afterPhotos.slice(1).map(g => (
                           <div key={g.id} className="relative rounded-lg overflow-hidden bg-slate-100">
-                            <img src={g.foto_url?.startsWith('/') ? 'https://eco-lapor.43.157.235.76.nip.io' + g.foto_url : g.foto_url} alt="Sesudah" className="w-full h-24 object-cover" onError={e => { e.target.style.display='none'; }} />
+                            <img src={g.foto_url?.startsWith('/') ? window.location.origin + g.foto_url : g.foto_url} alt="Sesudah" className="w-full h-24 object-cover" onError={e => { e.target.style.display='none'; }} />
                           </div>
                         ))}
                       </div>
