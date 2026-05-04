@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "allow": ["read", "write", "exec"],
+    "deny": ["rm -rf /", "curl -X DELETE", "drop table"],
+    "elevated": false
+  },
+  "hooks": {
+    "PostToolUse": {
+      "path": ".claude/hooks/PostToolUse.sh",
+      "enabled": true
+    },
+    "SessionStart": {
+      "path": ".claude/hooks/SessionStart.sh",
+      "enabled": true
+    },
+    "PreCompact": {
+      "path": ".claude/hooks/PreCompact.sh",
+      "enabled": true
+    }
+  },
+  "model": {
+    "override": null,
+    "fallback": "openrouter/qwen/qwen3-next-80b-a3b-instruct:free"
+  },
+  "rules": {
+    "paths": {
+      "backend/**": [".claude/rules/api.md"],
+      "api/**": [".claude/rules/api.md"],
+      "bot/**": [".claude/rules/bot.md"]
+    }
+  },
+  "agents": {
+    "code-reviewer": ".claude/commands/agents/code-reviewer.md",
+    "researcher": ".claude/commands/agents/researcher.md",
+    "log-analyzer": ".claude/commands/agents/log-analyzer.md"
+  },
+  "skills": {
+    "waste-report": ".claude/commands/skills/waste-report/SKILL.md",
+    "carousel": ".claude/commands/skills/carousel/SKILL.md"
+  },
+  "outputStyles": {
+    "terse": ".claude/output-styles/terse.md"
+  }
+}

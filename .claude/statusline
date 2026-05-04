@@ -1,0 +1,37 @@
+# StatusLine Config
+
+Format: `{branch} {changes} {last_cmd}`
+
+```
+[git branch] [±N pending] [last command or _]
+```
+
+## Fields
+
+- **Branch**: `git rev-parse --abbrev-ref HEAD`
+- **Pending changes**: `git status --porcelain | wc -l` → `+N` if changes, empty if clean
+- **Last command**: last 20 chars of the last `exec` command run (truncated)
+
+## Example Output
+
+```
+main +3 "ruff check ."
+feature/NM-45 +1 "python bot/m~"
+```
+
+## Configuration
+
+```json
+{
+  "format": "{branch} {changes} {last_cmd}",
+  "separator": " | ",
+  "max_cmd_len": 20,
+  "empty_changes": "_",
+  "colors": {
+    "branch": "#7aa2f7",
+    "changes": "#e0af68",
+    "clean": "#9ece6a",
+    "last_cmd": "#565f89"
+  }
+}
+```

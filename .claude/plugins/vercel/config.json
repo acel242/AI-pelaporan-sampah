@@ -1,0 +1,22 @@
+{
+  "project": {
+    "name": "ai-pelaporan-sampah-api",
+    "framework": "fastapi",
+    "buildCommand": "pip install -r requirements.txt",
+    "outputDirectory": "backend",
+    "installCommand": "pip install -r backend/requirements.txt",
+    "devCommand": "cd backend && uvicorn main:app --reload --port 8000"
+  },
+  "env": {
+    "DATABASE_URL": "@vercel/env/DATABASE_URL",
+    "SECRET_KEY": "@vercel/env/SECRET_KEY",
+    "TELEGRAM_BOT_TOKEN": "@vercel/env/TELEGRAM_BOT_TOKEN"
+  },
+  "regions": ["sin1"],
+  "aliases": ["ecolapor.yourdomain.com"],
+  "serverless": {
+    "runtime": "python-3.11",
+    "memorySize": 1024,
+    "maxDuration": 10
+  }
+}

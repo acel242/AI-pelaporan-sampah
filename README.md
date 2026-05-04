@@ -159,9 +159,9 @@ AI-pelaporan-sampah/
 | **Backend** | Flask + Flask-CORS | REST API, port 5000 |
 | **Database** | SQLite | Shared antara bot & backend |
 | **Bot** | python-telegram-bot | Chatbot + AI agent |
-| **AI Vision** | GPT-5.1 (SumoPod) | Validasi foto, deskripsi otomatis |
-| **AI Klasifikasi** | Llama 3.1 8B (Groq) | Kategori, prioritas, sub-kategori |
-| **Web Server** | Nginx | Reverse proxy + SSL (Let's Encrypt) |
+| **AI Vision** | SumoPod (gpt-4o-mini) | Validasi foto, deskripsi otomatis berbasis kategori |
+| **AI Klasifikasi** | Groq (Llama 3.1) + Sumopod | Kategori, prioritas, sub-kategori, deskripsi |
+| **Web Server** | Nginx | Reverse proxy + SSL/HTTPS (Let's Encrypt & DuckDNS) |
 | **Deployment** | VPS Ubuntu | 43.157.235.76 |
 
 ---
@@ -184,6 +184,23 @@ AI-pelaporan-sampah/
 | `GET` | `/api/notifications` | Notifikasi belum dibaca |
 | `POST` | `/api/agent/describe` | AI auto-describe foto |
 | `POST` | `/api/agent/priority` | AI analisis prioritas |
+
+---
+
+## 🎬 Video Documentation
+
+EcoLapor kini memiliki **pipeline video documentation otomatis** menggunakan:
+- **Playwright** (browser automation & recording)
+- **Sumopod API** (narration generation)
+- **gTTS** (free text-to-speech)
+- **FFmpeg** (video + audio merging)
+
+Pipeline menghasilkan video dokumentasi website lengkap dengan:
+- Narasi AI yang disesuaikan dengan konten website
+- Rekaman layar (scroll otomatis) 
+- Voiceover dalam Bahasa Indonesia
+
+Lokasi script: `/home/ubuntu/.openclaw/workspace/eco-lapor-video-doc/`
 
 ---
 
