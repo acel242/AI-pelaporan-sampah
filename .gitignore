@@ -1,0 +1,61 @@
+# Environment and secrets
+.env
+.env.*
+secrets.env
+*.local.*
+*.local
+
+# Logs
+*.log
+tunnel.log
+bot.log
+backend.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.eggs/
+
+# Node
+node_modules/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+
+# Build artifacts
+*.pyc
+*.pyo
+dist/
+build/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vercel
+.vercel/
+
+# Tunnel
+tunnel_url.txt
+
+# Images (uploaded reports - keep directory, ignore files)
+data/reports/*
+data/reports/.*  # hidden files
+
+# Claude
+.claude/settings.local.json

@@ -54,7 +54,20 @@ async def init_db():
                 FOREIGN KEY (laporan_id) REFERENCES laporan(id)
             )
         """)
-        
+
+        # report_photos table (for before/after gallery on website)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS report_photos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                laporan_id INTEGER,
+                photo_type TEXT DEFAULT 'after',
+                foto_url TEXT,
+                caption TEXT,
+                uploaded_at TEXT,
+                FOREIGN KEY (laporan_id) REFERENCES laporan(id)
+            )
+        """)
+
         # Migration: add columns if they don't exist (newer columns not in CREATE TABLE)
         for col in ["foto", "jenis_sampah", "kategori", "sub_kategori", "latitude", "longitude"]:
             try:
@@ -350,6 +363,30 @@ async def get_foto_bukti(laporan_id: int) -> list[dict]:
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+
+async def get_report_photos(laporan_id: int) -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM report_photos WHERE laporan_id = ? ORDER BY uploaded_at ASC",
+            (laporan_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def add_report_photo(laporan_id: int, photo_type: str, foto_url: str, caption: str = "") -> dict:
+    """Insert a photo into report_photos table (before/after gallery)."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        now = datetime.now().isoformat()
+        cursor = await db.execute(
+            """INSERT INTO report_photos (laporan_id, photo_type, foto_url, caption, uploaded_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (laporan_id, photo_type, foto_url, caption, now)
+        )
+        await db.commit()
+        return {"id": cursor.lastrowid, "laporan_id": laporan_id, "foto_url": foto_url, "uploaded_at": now}
 
 # ─────────────────────────────────────────────
 # Update Operations

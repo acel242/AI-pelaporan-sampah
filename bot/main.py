@@ -325,6 +325,34 @@ async def auto_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("❌ ID harus angka. Contoh: /auto 5 completed")
 
+async def save_photo_locally(photo, context: ContextTypes.DEFAULT_TYPE) -> tuple[str, str] | None:
+    """Download Telegram photo, save to local disk, return (file_url, filepath) or None on error."""
+    file_id = photo.file_id
+    try:
+        from io import BytesIO
+        tg_file = await context.bot.get_file(file_id)
+        buffer = BytesIO()
+        await tg_file.download_to_memory(out=buffer)
+        buffer.seek(0)
+        image_data = buffer.read()
+
+        # Save to same foto/ directory as backend
+        import os
+        from datetime import datetime
+        foto_dir = os.path.join(os.path.dirname(__file__), '..', 'backend', 'static', 'foto')
+        os.makedirs(foto_dir, exist_ok=True)
+        filename = f"bukti_{datetime.now().strftime('%Y%m%d%H%M%S')}_{photo.file_size or 0}.jpg"
+        filepath = os.path.join(foto_dir, filename)
+        with open(filepath, 'wb') as f:
+            f.write(image_data)
+
+        file_url = f"/static/foto/{filename}"
+        return file_url, filepath
+    except Exception as e:
+        logger.error(f"Failed to save photo locally: {e}")
+        return None
+
+
 async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle photo messages - check if waiting for foto upload."""
     user = update.effective_user
@@ -339,29 +367,37 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     photo = update.message.photo[-1]
-    file_id = photo.file_id
 
-    # Download photo from Telegram and convert to base64
-    try:
-        from io import BytesIO
-        tg_file = await context.bot.get_file(file_id)
-        buffer = BytesIO()
-        await tg_file.download_to_memory(out=buffer)
-        buffer.seek(0)
-        foto_base64 = base64.b64encode(buffer.read()).decode('utf-8')
-        foto_data_uri = f"data:image/jpeg;base64,{foto_base64}"
-    except Exception as e:
-        logger.error(f"Failed to download Telegram photo: {e}")
+    # Download and save photo locally
+    result = await save_photo_locally(photo, context)
+    if not result:
         await update.message.reply_text("❌ Gagal download foto. Coba lagi.")
+        del _pending_foto_uploads[user.id]
         return
 
-    # Store in foto_bukti table ONLY - do NOT overwrite warga's original photo
-    # The bukti photo is separate from the warga's submission photo
-    from tools import upload_foto_tool
-    result = await upload_foto_tool(report_id, file_id, user.id)
+    file_url, filepath = result
+
+    # Save to both foto_bukti AND report_photos tables
+    from database import add_foto_bukti, add_report_photo
+    try:
+        await add_foto_bukti(report_id, file_url)
+    except Exception as e:
+        logger.error(f"Failed to insert into foto_bukti: {e}")
+
+    try:
+        await add_report_photo(report_id, "after", file_url, "Foto penanganan petugas")
+    except Exception as e:
+        logger.error(f"Failed to insert into report_photos: {e}")
 
     del _pending_foto_uploads[user.id]
-    await update.message.reply_text(result["message"])
+
+    msg = (
+        f"📸 Foto bukti berhasil disimpan!\n\n"
+        f"📋 Laporan: #{report_id}\n"
+        f"🖼️ File: {file_url}\n\n"
+        f"Foto akan muncul di halaman laporan pada website."
+    )
+    await update.message.reply_text(msg)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
