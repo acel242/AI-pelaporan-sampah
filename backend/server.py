@@ -1183,6 +1183,16 @@ def create_routes(app):
         )
         db.commit()
 
+        # Also insert into report_photos as 'after' photo
+        try:
+            cursor2 = db.execute(
+                "INSERT INTO report_photos (laporan_id, photo_type, foto_url, caption, uploaded_at) VALUES (?, ?, ?, ?)",
+                (laporan_id, "after", foto_url, "Foto penanganan petugas", now)
+            )
+            db.commit()
+        except Exception as e:
+            print(f"[WARN] Failed to save to report_photos: {e}")
+
         return jsonify({
             "success": True,
             "id": cursor.lastrowid,

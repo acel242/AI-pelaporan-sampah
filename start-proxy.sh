@@ -45,6 +45,21 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Proxy /static/foto/* to local backend (port 5000) - photos stored on backend server
+  if (url.pathname.startsWith('/static/foto/')) {
+    try {
+      const resp = await fetch('http://localhost:5000' + url.pathname + url.search, { 
+        method: req.method, 
+        headers: { 'Accept': req.headers['accept'] || '*/*' }, 
+        signal: AbortSignal.timeout(10000) 
+      });
+      const buf = Buffer.from(await resp.arrayBuffer());
+      res.writeHead(resp.status, {'Content-Type': resp.headers.get('content-type') || 'image/jpeg', 'Cache-Control': 'public, max-age=300'});
+      res.end(buf);
+    } catch (e) { res.writeHead(502, {'Content-Type': 'application/json'}); res.end(JSON.stringify({error:'Failed to load image: ' + e.message})); }
+    return;
+  }
+
   const filePath = url.pathname === '/' ? '/index.html' : url.pathname;
   const fullPath = path.join(DIST, filePath);
   const ext = path.extname(fullPath);
