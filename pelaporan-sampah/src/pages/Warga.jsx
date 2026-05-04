@@ -464,26 +464,34 @@ export function Warga() {
             </div>
             <div className="p-6 space-y-5">
               {/* Before/After Photo Comparison */}
-              {hasBefore && (
+              {(hasBefore || afterPhotos.length > 0) && (
                 <div className="space-y-3">
-                  <p className="text-sm font-bold text-slate-700">📸 Perbandingan Sebelum & Sesudah</p>
-                  <div className={`grid ${afterPhotos.length > 0 ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
+                  <p className="text-sm font-bold text-slate-700">
+                    {hasBefore && afterPhotos.length > 0
+                      ? '📸 Perbandingan Sebelum & Sesudah'
+                      : hasBefore
+                        ? '📷 Foto Sebelum'
+                        : '✅ Foto Penanganan (Sesudah)'}
+                  </p>
+                  <div className={`grid ${hasBefore && afterPhotos.length > 0 ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
                     {/* Before */}
-                    <div className="relative">
-                      <div className="absolute top-2 left-2 z-10 px-2 py-1 rounded-lg text-xs font-bold text-white bg-amber-500 shadow">📷 SEBELUM</div>
-                      {beforeGallerySrc ? (
-                        <img src={beforeGallerySrc} alt="Sebelum" className="w-full rounded-xl object-cover h-48 bg-slate-100"
-                          onError={e => { if (beforeBase64Src) { e.target.src = beforeBase64Src; } else { e.target.style.display='none'; e.target.parentElement.querySelector('.fallback-msg').style.display='flex'; } }} />
-                      ) : beforeBase64Src ? (
-                        <img src={beforeBase64Src} alt="Sebelum" className="w-full rounded-xl object-cover h-48 bg-slate-100"
-                          onError={e => { e.target.style.display='none'; e.target.parentElement.querySelector('.fallback-msg').style.display='flex'; }} />
-                      ) : null}
-                      {!hasBefore && (
-                        <div className="w-full rounded-xl h-48 bg-amber-50 flex items-center justify-center fallback-msg">
-                          <p className="text-sm text-amber-400 font-medium">Tidak ada foto</p>
-                        </div>
-                      )}
-                    </div>
+                    {hasBefore && (
+                      <div className="relative">
+                        <div className="absolute top-2 left-2 z-10 px-2 py-1 rounded-lg text-xs font-bold text-white bg-amber-500 shadow">📷 SEBELUM</div>
+                        {beforeGallerySrc ? (
+                          <img src={beforeGallerySrc} alt="Sebelum" className="w-full rounded-xl object-cover h-48 bg-slate-100"
+                            onError={e => { if (beforeBase64Src) { e.target.src = beforeBase64Src; } else { e.target.style.display='none'; e.target.parentElement.querySelector('.fallback-msg').style.display='flex'; } }} />
+                        ) : beforeBase64Src ? (
+                          <img src={beforeBase64Src} alt="Sebelum" className="w-full rounded-xl object-cover h-48 bg-slate-100"
+                            onError={e => { e.target.style.display='none'; e.target.parentElement.querySelector('.fallback-msg').style.display='flex'; }} />
+                        ) : null}
+                        {!hasBefore && (
+                          <div className="w-full rounded-xl h-48 bg-amber-50 flex items-center justify-center fallback-msg">
+                            <p className="text-sm text-amber-400 font-medium">Tidak ada foto</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {/* After */}
                     {afterPhotos.length > 0 ? (
                       <div className="relative">
@@ -492,8 +500,11 @@ export function Warga() {
                           src={afterPhotos[0].foto_url?.startsWith('/') ? window.location.origin + afterPhotos[0].foto_url : afterPhotos[0].foto_url}
                           alt="Sesudah"
                           className="w-full rounded-xl object-cover h-48 bg-slate-100"
-                          onError={e => { e.target.style.display='none'; }}
+                          onError={e => { e.target.style.display='none'; e.target.parentElement.querySelector('.fallback-msg-after').style.display='flex'; }}
                         />
+                        <div className="w-full rounded-xl h-48 bg-red-50 flex items-center justify-center fallback-msg-after" style={{display:'none'}}>
+                          <p className="text-sm text-red-400 font-medium">Gagal memuat foto</p>
+                        </div>
                       </div>
                     ) : (
                       <div className="relative">
